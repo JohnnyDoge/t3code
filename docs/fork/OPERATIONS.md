@@ -58,7 +58,7 @@ git rebase --onto "$target" "$(git merge-base main "$target")" main
 ```
 
 Review any solutions staged by rerere. Edit each remaining conflict, run `git add` on the
-resolved files, and run `git rebase --continue` until it finishes. Use
+resolved files, then run `git rerere` and `git rebase --continue` until it finishes. Use
 `vp run --filter @t3tools/web build` to regenerate the route tree. For translation JSON,
 `git checkout --ours -- <file>` takes the upstream side during the rebase. Keep rerere
 enabled for future local runs. CI keeps its own rerere cache.

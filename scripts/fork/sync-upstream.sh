@@ -31,7 +31,8 @@ output() {
 }
 
 run_rebase() {
-  GIT_EDITOR=true git -c rerere.enabled=true -c rerere.autoupdate=true rebase "$@"
+  # Apply the file-specific policies before rerere, whose cache keys ignore paths.
+  GIT_EDITOR=true git -c rerere.enabled=false rebase "$@"
 }
 
 stage=initialization
@@ -42,7 +43,7 @@ finish() {
     output failure "$stage"
     printf 'Fork sync failed during %s.\n' "$stage" >&2
     if [[ $rebasing == true && -d $(git rev-parse --git-path rebase-merge) ]]; then
-      run_rebase --abort
+      git -c rerere.enabled=true rebase --abort
     fi
   fi
 }
@@ -118,8 +119,7 @@ rebasing=true
 stage="rebase $branch onto ${new_tag##*/}"
 last_conflict_commit=
 resolve_conflicts() {
-  local commit path regenerate=false
-  local translations=() other_conflicts=()
+  local commit path conflicts regenerate=false
   [[ -d $(git rev-parse --git-path rebase-merge) ]] || return 1
   commit=$(git rev-parse --verify REBASE_HEAD)
   if [[ $commit == "$last_conflict_commit" ]]; then
@@ -130,20 +130,8 @@ resolve_conflicts() {
   while IFS= read -r -d '' path; do
     if [[ $path == "$route_tree" ]]; then
       regenerate=true
+      git rm -f -- "$route_tree"
     elif [[ $path =~ ^apps/[^/]+/src/i18n/translations/[^/]+\.json$ ]]; then
-      translations+=("$path")
-    else
-      other_conflicts+=("$path")
-    fi
-  done < <(git diff --name-only --diff-filter=U -z)
-
-  if (( ${#other_conflicts[@]} )); then
-    stage="unresolved conflicts in ${other_conflicts[*]}"
-    printf 'Unresolved conflict: %s\n' "${other_conflicts[@]}" >&2
-    return 1
-  fi
-  if (( ${#translations[@]} )); then
-    for path in "${translations[@]}"; do
       # During a rebase, stage 2 (ours) is the upstream side.
       if git cat-file -e ":2:$path" 2>/dev/null; then
         git checkout --ours -- "$path"
@@ -151,13 +139,20 @@ resolve_conflicts() {
       else
         git rm -- "$path"
       fi
-    done
+    fi
+  done < <(git diff --name-only --diff-filter=U -z)
+
+  git -c rerere.enabled=true -c rerere.autoupdate=true rerere
+  conflicts=$(git diff --name-only --diff-filter=U)
+  if [[ -n $conflicts ]]; then
+    stage="unresolved conflicts in ${conflicts//$'\n'/, }"
+    printf 'Unresolved conflicts:\n%s\n' "$conflicts" >&2
+    return 1
   fi
   if [[ $regenerate == true ]]; then
     stage="install dependencies to regenerate $route_tree"
     vp i
     stage="regenerate $route_tree with the web build's TanStack Router plugin"
-    rm -f -- "$route_tree"
     vp run --filter @t3tools/web build
     git add -- "$route_tree"
   fi
