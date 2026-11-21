@@ -184,4 +184,9 @@ else
   Darwin.rename(source, target, Darwin::RENAME_EXCL)
 end
 RUBY
-/usr/bin/open -n -a "$target"
+# Both apps share one profile and database, so only one may run; leave the official app alone.
+if [[ "$(/usr/bin/osascript -e 'application id "com.t3tools.t3code" is running')" = true ]]; then
+  printf 'Installed. Quit the official T3 Code, then open %s.\n' "$target"
+else
+  /usr/bin/open -n -a "$target"
+fi
