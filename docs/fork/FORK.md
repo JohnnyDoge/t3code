@@ -249,7 +249,8 @@ alone.
   deleting them during sync, so nothing upstream ever runs in the fork's Actions.
 - **Weekly** CI job (`fork-release`), plus a manual trigger: build macOS arm64
   (dmg + zip) and Windows x64 (nsis), then publish a GitHub prerelease with the
-  electron-builder update metadata.
+  electron-builder update metadata. After the validated assets are public, GitHub Actions
+  updates `update-feed/nightly.json` so the newest fork nightly is discoverable.
 - macOS: no Apple Developer account. Builds are signed with one **stable self-signed
   code-signing certificate** (stored as CI secrets), so every build has the same
   designated requirement. Notarization is skipped. Squirrel.Mac's check was verified to

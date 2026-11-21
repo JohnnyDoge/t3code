@@ -49,7 +49,14 @@ function userKeychains() {
 }
 
 export default async function signForkMac(options: SignOptions) {
-  const credentials = signingCredentials();
+  const credentialsPath = process.env.T3CODE_FORK_MAC_SIGNING_INPUT;
+  if (!credentialsPath) {
+    throw new Error("Run the desktop build through scripts/fork/build-desktop.ts.");
+  }
+  const credentials = JSON.parse(NodeFS.readFileSync(credentialsPath, "utf8")) as ReturnType<
+    typeof signingCredentials
+  >;
+  delete process.env.T3CODE_FORK_MAC_SIGNING_INPUT;
   const originalKeychains = userKeychains();
   const directory = NodeFS.realpathSync(
     NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-fork-signing-")),
@@ -180,8 +187,8 @@ async function main() {
     // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone build wrapper runs before Effect starts.
     if (process.platform !== "darwin")
       throw new Error("macOS signing requires a macOS build host.");
-    signingCredentials();
   }
+  const credentials = mac ? signingCredentials() : undefined;
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
@@ -196,27 +203,43 @@ async function main() {
   delete env.CSC_NAME;
   delete env.WIN_CSC_LINK;
   delete env.WIN_CSC_KEY_PASSWORD;
-  const child = NodeChildProcess.spawn(
-    process.execPath,
-    [
-      NodeURL.fileURLToPath(new URL("../build-desktop-artifact.ts", import.meta.url)),
-      "--platform",
-      platform,
-      "--arch",
-      arch,
-      "--target",
-      mac ? "dmg" : "nsis",
-      "--build-version",
-      version,
-      "--output-dir",
-      NodePath.resolve(out),
-    ],
-    { env, stdio: "inherit" },
-  );
-  process.exitCode = await new Promise<number>((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code) => resolve(code ?? 1));
-  });
+  delete env.FORK_MAC_CERT_P12_BASE64;
+  delete env.FORK_MAC_CERT_PASSWORD;
+  delete env.T3CODE_FORK_MAC_SIGNING_INPUT;
+
+  const signingDirectory = credentials
+    ? NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-fork-signing-input-"))
+    : undefined;
+  try {
+    if (signingDirectory) {
+      const credentialsPath = NodePath.join(signingDirectory, "credentials.json");
+      NodeFS.writeFileSync(credentialsPath, JSON.stringify(credentials), { mode: 0o600 });
+      env.T3CODE_FORK_MAC_SIGNING_INPUT = credentialsPath;
+    }
+    const child = NodeChildProcess.spawn(
+      process.execPath,
+      [
+        NodeURL.fileURLToPath(new URL("../build-desktop-artifact.ts", import.meta.url)),
+        "--platform",
+        platform,
+        "--arch",
+        arch,
+        "--target",
+        mac ? "dmg" : "nsis",
+        "--build-version",
+        version,
+        "--output-dir",
+        NodePath.resolve(out),
+      ],
+      { env, stdio: "inherit" },
+    );
+    process.exitCode = await new Promise<number>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", (code) => resolve(code ?? 1));
+    });
+  } finally {
+    if (signingDirectory) NodeFS.rmSync(signingDirectory, { recursive: true, force: true });
+  }
 }
 
 if (import.meta.main) {

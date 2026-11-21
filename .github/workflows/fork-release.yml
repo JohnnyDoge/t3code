@@ -70,7 +70,7 @@ jobs:
             fi
           fi
 
-          upstream_tag=$(bash scripts/fork/sync-upstream.sh --upstream-base)
+          upstream_tag=$(bash scripts/fork/upstream-base.sh)
           version=$(node scripts/fork/release-version.ts "$upstream_tag" "$(date -u +%Y%m%d)" \
             "$GITHUB_RUN_NUMBER" "$previous_tag")
           printf 'ref=%s\nversion=%s\n' "$ref" "$version" >> "$GITHUB_OUTPUT"
@@ -174,13 +174,25 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout release commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+          persist-credentials: false
+          sparse-checkout: scripts/fork
+
       - name: Download desktop artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: fork-desktop-*
           path: release-assets
 
-      - name: Publish prerelease and retain eight releases
+      - name: Validate both update manifests
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: ruby scripts/fork/validate-release.rb "$VERSION" release-assets > validated-assets.txt
+
+      - name: Publish validated prerelease
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -188,48 +200,71 @@ jobs:
           VERSION: ${{ needs.plan.outputs.version }}
         run: |
           tag="v$VERSION"
-          shopt -s nullglob
-          mac=release-assets/fork-desktop-mac
-          win=release-assets/fork-desktop-win
-          dmgs=("$mac"/*.dmg)
-          zips=("$mac"/*.zip)
-          installers=("$win"/*.exe)
-          if [[ ! -s "$mac/nightly-mac.yml" || ! -s "$win/nightly.yml" ]] ||
-             (( ${#dmgs[@]} == 0 || ${#zips[@]} == 0 || ${#installers[@]} == 0 )); then
-            echo "::error::Missing nightly updater metadata or desktop installers."
+          mapfile -t assets < validated-assets.txt
+          existing=$(gh release view "$tag" --json name,isDraft,targetCommitish \
+            --jq '[.name, (.isDraft | tostring), .targetCommitish] | @tsv' \
+            2>/dev/null) || existing=
+          tag_ref=$(git ls-remote --tags origin "refs/tags/$tag" "refs/tags/$tag^{}")
+          if [[ -z $existing && -n $tag_ref ]]; then
+            echo "::error::Release tag $tag already exists without a fork release."
             exit 1
           fi
-          mapfile -d '' -t assets < <(find "$mac" "$win" -type f -print0)
-          declare -A asset_names
-          for asset in "${assets[@]}"; do
-            name=${asset##*/}
-            if [[ ${asset_names[$name]+present} ]]; then
-              echo "::error::Duplicate release asset name: $name"
-              exit 1
-            fi
-            asset_names[$name]=1
-          done
-
-          # The updater can discover the release as soon as it becomes public.
-          existing=$(gh release view "$tag" --json name,isDraft \
-            --jq '[.name, (.isDraft | tostring)] | @tsv' \
-            2>/dev/null) || existing=
+          if [[ -n $tag_ref && $(tail -n 1 <<< "$tag_ref" | cut -f1) != "$RELEASE_REF" ]]; then
+            echo "::error::Release tag $tag points at a different commit."
+            exit 1
+          fi
           case "$existing" in
             "")
               gh release create "$tag" --draft --prerelease --latest=false --target "$RELEASE_REF" \
                 --title "T3 Code Fork $tag" --notes "Desktop build from $RELEASE_REF." "${assets[@]}"
               ;;
-            "T3 Code Fork $tag"$'\t'true) gh release upload "$tag" --clobber "${assets[@]}" ;;
-            "T3 Code Fork $tag"$'\t'false) ;;
-            *) echo "::error::Release tag $tag is already in use." && exit 1 ;;
+            "T3 Code Fork $tag"$'\t'true$'\t'"$RELEASE_REF")
+              gh release upload "$tag" --clobber "${assets[@]}"
+              ;;
+            *) echo "::error::Release $tag already exists." && exit 1 ;;
           esac
-          if [[ $existing != "T3 Code Fork $tag"$'\t'false ]]; then
-            gh release edit "$tag" --draft=false --prerelease --latest=false
+          expected=$(printf '%s\n' "${assets[@]##*/}" | sort)
+          uploaded=$(gh release view "$tag" --json assets --jq '.assets[].name' | sort)
+          if [[ $uploaded != "$expected" ]]; then
+            echo "::error::Draft release assets differ from the validated files."
+            exit 1
           fi
+          gh release edit "$tag" --draft=false --prerelease --latest=false
 
+  update-feed:
+    needs: [plan, publish]
+    if: ${{ !cancelled() && github.repository != 'pingdotgg/t3code' && needs.plan.result == 'success' && (needs.publish.result == 'success' || needs.plan.outputs.version == '') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the nightly update pointer and retain eight releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
           published=$(gh release list --exclude-drafts --limit 100 --json tagName,name,isPrerelease \
-            --jq "$FORK_RELEASE_TAGS_QUERY")
-          expired=$(printf '%s\n%s\n' "$tag" "$published" | sort -Vru | tail -n +9)
+            --jq "$FORK_RELEASE_TAGS_QUERY" | sort -Vru)
+          tag=${published%%$'\n'*}
+          [[ -n $tag ]] || exit 0
+          version=${tag#v}
+          mac="T3-Code-$version-arm64"
+          win="T3-Code-$version-x64"
+          for asset in nightly-mac.yml "$mac.zip" "$mac.zip.blockmap" "$mac.dmg" "$mac.dmg.blockmap" \
+                       nightly.yml "$win.exe" "$win.exe.blockmap"; do
+            curl --fail --silent --show-error --location --head --output /dev/null \
+              --retry 4 --retry-all-errors --max-time 30 "https://github.com/$GH_REPO/releases/download/$tag/$asset"
+          done
+
+          gh release view "$tag" --json tagName,name,body --jq '{tag_name: .tagName, name, body}' > nightly.json
+          gh release view update-feed > /dev/null 2>&1 ||
+            gh release create update-feed --draft --prerelease --latest=false --title "Update feed" \
+              --notes "The desktop updater uses this release to find the newest fork nightly."
+          gh release upload update-feed nightly.json --clobber
+          gh release edit update-feed --draft=false --prerelease --latest=false
+
+          expired=$(tail -n +9 <<< "$published")
           while IFS= read -r previous; do
             [[ -n $previous ]] || continue
             gh release delete "$previous" --cleanup-tag --yes

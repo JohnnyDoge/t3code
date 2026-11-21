@@ -7,7 +7,8 @@ with the same common name still changes the update requirement.
 
 The fork build uses electron-builder and the upstream nested signing hook. During signing it
 adds a temporary keychain to the search list so Apple’s `codesign` can resolve the self-signed
-certificate. It deletes that keychain afterwards. The temporary keychain was sufficient on macOS
+certificate and removes the keychain after signing. The hook reads the credentials from a
+private temporary file, and the build wrapper removes it on exit. The temporary keychain was sufficient on macOS
 26.2 without changing certificate trust. The build retains hardened runtime, Electron’s normal
 signing entitlements, and the upstream camera and microphone entitlements. Apple provisioning
 profile entitlements for in-app browser passkeys require an Apple team and are omitted.
@@ -18,9 +19,12 @@ Notarization and secure timestamps are disabled.
 Run `scripts/fork/install-mac.sh --repo <owner/repo> --dry-run` to validate the latest nightly
 prerelease. The repository defaults to `T3CODE_DESKTOP_UPDATE_REPOSITORY` or the checkout’s
 GitHub `origin`. Run it without `--dry-run` to install. The default target is
-`/Applications/T3 Code (Nightly).app`. The script verifies the ZIP against `nightly-mac.yml`,
-verifies the unpacked app signature, and keeps the previous bundle beside the target as
-`*.app.backup-<date>`. It then opens the installed bundle. The installed app and the fork use
+`/Applications/T3 Code (Nightly).app`. The script reads the release tag from
+`update-feed/nightly.json` and verifies the ZIP against `nightly-mac.yml`. Before clearing
+quarantine, it checks the unpacked bundle against the fork certificate's pinned leaf SHA-1
+(`8AAF3B790302EEBCE7A8931EC62A51E3462798EA`) and, when replacing a fork install, against
+the installed bundle's designated requirement. The previous bundle stays beside the target as
+`*.app.backup-<date>`. The script then opens the installed bundle. The installed app and the fork use
 `T3 Code (Nightly)` and bundle ID `com.t3tools.t3code`. The packaged profile resolves to
 `~/Library/Application Support/t3code-v2`, and the default T3 state stays in
 `~/.t3/userdata`.
@@ -64,7 +68,9 @@ The 9002 code directory hash was identical before archiving and after extraction
 probe calling the same Security.framework functions as Squirrel.Mac returned `0` for the
 signed update and `-67050` for the ad-hoc copy. Both builds restored the keychain search list.
 The installer dry run validated the 9002 release metadata, SHA-512 and signature against
-a 9001 scratch target.
+a 9001 scratch target. The retained test release uses a separate certificate. To verify that
+release in a dry run, use `--test-signer-sha 76e49d5c12c3cf20ed471dbbc1752a8a19371579`
+and set `FORK_MAC_RELEASE_DIR` to the local test release directory.
 
 The in-app test requires a separate macOS user session or VM. The installed and scratch builds
 share a bundle ID and ShipIt derives its launchd service and update-state location from that

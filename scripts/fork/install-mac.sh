@@ -10,26 +10,42 @@ fail() {
 target='/Applications/T3 Code (Nightly).app'
 repo=${T3CODE_DESKTOP_UPDATE_REPOSITORY:-}
 dry_run=false
+fork_cert_sha=8AAF3B790302EEBCE7A8931EC62A51E3462798EA
+signer_sha=$fork_cert_sha
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --target) [[ $# -ge 2 && -n "$2" ]] || fail '--target requires a path'; target=$2; shift ;;
     --repo) [[ $# -ge 2 && -n "$2" ]] || fail '--repo requires owner/repo'; repo=$2; shift ;;
     --dry-run) dry_run=true ;;
-    *) fail "Usage: $0 [--target <path to .app>] [--repo owner/repo] [--dry-run]" ;;
+    --test-signer-sha)
+      [[ $# -ge 2 && $2 =~ ^[[:xdigit:]]{40}$ ]] || fail '--test-signer-sha requires a SHA-1 fingerprint'
+      signer_sha=$2
+      shift
+      ;;
+    *) fail "Usage: $0 [--target <path to .app>] [--repo owner/repo] [--dry-run [--test-signer-sha <sha1>]]" ;;
   esac
   shift
 done
 
+[[ "$signer_sha" = "$fork_cert_sha" ]] || "$dry_run" || fail '--test-signer-sha requires --dry-run'
 [[ "$(uname -s)" = Darwin ]] || fail 'The installer requires macOS.'
 [[ "$target" = *.app ]] || fail 'The target must be a .app bundle.'
 [[ "$target" = /* ]] || target="$PWD/$target"
 parent=$(cd "$(dirname "$target")" && pwd -P)
 target="$parent/${target##*/}"
 bundle_id=com.t3tools.t3code
+installed_requirement=
 if [[ -e "$target" || -L "$target" ]]; then
   [[ ! -L "$target" && -d "$target" ]] || fail "Refusing to replace a symlink or non-bundle at $target"
   old_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$target/Contents/Info.plist")
   [[ "$old_id" = "$bundle_id" ]] || fail "Unexpected bundle identifier at $target"
+  installed_signature=$(/usr/bin/codesign -d --verbose=4 -r- "$target" 2>&1)
+  installed_sha=$(tr '[:upper:]' '[:lower:]' <<< "$fork_cert_sha")
+  if grep -Fqx 'Authority=T3 Code Fork Signing' <<< "$installed_signature" ||
+    grep -Fiq "$installed_sha" <<< "$installed_signature"; then
+    installed_requirement=$(sed -n 's/^designated => //p' <<< "$installed_signature")
+    [[ -n "$installed_requirement" ]] || fail "Missing designated requirement for the installed fork."
+  fi
 fi
 
 if "$dry_run"; then
@@ -42,18 +58,6 @@ trap 'exit 1' HUP INT TERM
 
 fetch_public() {
   curl --fail --silent --show-error --location --proto '=https' --retry 2 "$@"
-}
-
-latest_nightly_tag() {
-  /usr/bin/ruby -rjson -e '
-    releases = JSON.parse(STDIN.read)
-    release = releases.select do |entry|
-      (entry["isPrerelease"] || entry["prerelease"]) && !entry["draft"] &&
-        (entry["tagName"] || entry["tag_name"]).match?(/\Av?\d+\.\d+\.\d+-nightly\.\d{8}\.\d+\z/)
-    end.max_by { |entry| entry["publishedAt"] || entry["published_at"] }
-    abort "No published nightly prerelease found." unless release
-    puts release["tagName"] || release["tag_name"]
-  '
 }
 
 metadata=nightly-mac.yml
@@ -72,17 +76,15 @@ else
     repo=${repo%.git}
   fi
   [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail 'Set --repo to the public fork owner/repo.'
-  if command -v gh >/dev/null && gh auth status --active --hostname github.com >/dev/null 2>&1; then
-    tag=$(gh release list --repo "$repo" --exclude-drafts --limit 100 \
-      --json isPrerelease,tagName,publishedAt | latest_nightly_tag)
-    gh release download "$tag" --repo "$repo" --pattern "$metadata" --dir "$work_dir"
-    download_zip() { gh release download "$tag" --repo "$repo" --pattern "$1" --dir "$work_dir"; }
-  else
-    tag=$(fetch_public "https://api.github.com/repos/$repo/releases?per_page=100" | latest_nightly_tag)
-    release_url="https://github.com/$repo/releases/download/$tag"
-    fetch_public "$release_url/$metadata" --output "$work_dir/$metadata"
-    download_zip() { fetch_public "$release_url/$1" --output "$work_dir/$1"; }
-  fi
+  fetch_public "https://github.com/$repo/releases/download/update-feed/nightly.json" \
+    --output "$work_dir/nightly.json"
+  tag=$(/usr/bin/ruby -rjson -e '
+    tag = JSON.parse(File.read(ARGV[0])).fetch("tag_name")
+    abort "Invalid nightly tag in the fork update feed." unless tag.match?(/\Av\d+\.\d+\.\d+-nightly\.\d{8}\.\d+\z/)
+    puts tag
+  ' "$work_dir/nightly.json")
+  release_url="https://github.com/$repo/releases/download/$tag"
+  fetch_public "$release_url/$metadata" --output "$work_dir/$metadata"
 fi
 
 selection=$(/usr/bin/ruby -ryaml -e '
@@ -104,7 +106,7 @@ read -r zip_name expected_sha version <<< "$selection"
 if [[ -n "$local_release" ]]; then
   cp "$local_release/$zip_name" "$work_dir/$zip_name"
 else
-  download_zip "$zip_name"
+  fetch_public "$release_url/$zip_name" --output "$work_dir/$zip_name"
 fi
 actual_sha=$(/usr/bin/openssl dgst -sha512 -binary "$work_dir/$zip_name" | /usr/bin/openssl base64 -A)
 [[ "$actual_sha" = "$expected_sha" ]] || fail "SHA-512 mismatch for $zip_name"
@@ -117,11 +119,19 @@ app=${apps[0]}
 new_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")
 new_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")
 [[ "$new_id" = "$bundle_id" && "$new_version" = "$version" ]] || fail 'The app identity or version does not match the release.'
+verify_requirement() {
+  /usr/bin/codesign --verify --deep --strict --all-architectures -R "=$1" "$app"
+}
+
+verify_requirement "identifier \"$bundle_id\" and certificate leaf = H\"$signer_sha\"" ||
+  fail "The app does not satisfy the fork signer pin ($signer_sha)."
+if [[ -n $installed_requirement ]]; then
+  verify_requirement "$installed_requirement" || fail "The app does not satisfy the installed fork's designated requirement."
+fi
 if ! /usr/bin/xattr -dr com.apple.quarantine "$app" 2>/dev/null; then
   attributes=$(/usr/bin/xattr -r "$app")
   [[ "$attributes" != *com.apple.quarantine* ]] || fail 'Could not remove quarantine from the app.'
 fi
-/usr/bin/codesign --verify --deep --strict --all-architectures "$app"
 
 backup="$target.backup-$(date -u +%Y%m%dT%H%M%SZ)-${work_dir##*.}"
 if "$dry_run"; then

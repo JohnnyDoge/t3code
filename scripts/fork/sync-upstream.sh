@@ -1,196 +1,292 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-upstream_url=https://github.com/pingdotgg/t3code.git
-upstream_main=refs/fork-upstream/main
-upstream_tags=refs/fork-upstream/tags
-route_tree=apps/web/src/routeTree.gen.ts
-
-fetch_upstream() {
-  # Keep upstream nightly tags out of the fork's release tag namespace.
-  local advertised_tags latest_ref
-  advertised_tags=$(git ls-remote --refs --tags --exit-code --sort=-version:refname \
-    "$upstream_url" 'refs/tags/v*-nightly.*')
-  latest_ref=$(awk 'NR == 1 { print $2 }' <<< "$advertised_tags")
-  new_tag="$upstream_tags/${latest_ref##*/}"
-  # Fetch refspecs allow only one wildcard, so expand the tag pattern first.
-  {
-    printf '+refs/heads/main:%s\n' "$upstream_main"
-    awk -v dest="$upstream_tags/" '{ print "+" $2 ":" dest substr($2, 11) }' <<< "$advertised_tags"
-  } | git fetch --atomic --no-tags --quiet --stdin "$upstream_url"
-}
-
-latest_nightly() {
-  git for-each-ref --sort=-version:refname --count=1 --format='%(refname)' "$@" "$upstream_tags"
-}
-
-output() {
-  if [[ -n ${GITHUB_OUTPUT:-} ]]; then
-    printf '%s=%s\n' "$1" "$2" >> "$GITHUB_OUTPUT"
-  fi
-}
-
-run_rebase() {
-  # Apply the file-specific policies before rerere, whose cache keys ignore paths.
-  GIT_EDITOR=true git -c rerere.enabled=false rebase "$@"
-}
-
-stage=initialization
-rebasing=false
+report='error initialize sync'
+lock=
+# shellcheck disable=SC2329 # Invoked by the EXIT trap.
 finish() {
-  local status=$?
-  if (( status != 0 )); then
-    output failure "$stage"
-    printf 'Fork sync failed during %s.\n' "$stage" >&2
-    if [[ $rebasing == true && -d $(git rev-parse --git-path rebase-merge) ]]; then
-      git -c rerere.enabled=true rebase --abort
-    fi
+  if [[ -n $lock ]]; then
+    rm -f -- "$lock/conflicts" "$lock/workflows" "$lock/upstream-base.sh"
+    rmdir "$lock" || true
   fi
+  printf '%s\n' "$report"
+  case "$report" in
+    up-to-date|pushed\ *) exit 0 ;;
+    conflict\ *) exit 2 ;;
+    check-failed\ *) exit 3 ;;
+    push-rejected) exit 4 ;;
+    *) exit 1 ;;
+  esac
 }
 trap finish EXIT
 
-cd "$(git rev-parse --show-toplevel)"
-case ${1:---dry-run} in
-  --upstream-base)
-    [[ $# == 1 ]]
-    stage="fetch upstream nightlies"
-    fetch_upstream
-    shared_base=$(git merge-base HEAD "$upstream_main")
-    base_tag=$(latest_nightly --merged="$shared_base")
-    if [[ -z $base_tag ]]; then
-      echo "HEAD has no upstream nightly base." >&2
-      exit 1
-    fi
-    printf '%s\n' "${base_tag##*/}"
-    exit 0
-    ;;
-  --push)
-    [[ $# == 2 && $2 =~ ^[0-9a-f]{40}$ ]]
-    stage="push main with the original checkout as lease"
-    git push --force-with-lease="refs/heads/main:$2" origin main
-    exit 0
-    ;;
-  --dry-run|--rebase-only)
-    [[ $# -le 2 ]]
-    branch=${2:-main}
-    ;;
-  *)
-    echo "Usage: $0 [--dry-run [branch] | --rebase-only [branch] | --upstream-base | --push <original-main-sha>]" >&2
-    exit 2
-    ;;
-esac
-
-stage="verify checkout"
-git check-ref-format --branch "$branch" > /dev/null
-if [[ -n $(git status --porcelain) || -d $(git rev-parse --git-path rebase-merge) ||
-      -d $(git rev-parse --git-path rebase-apply) ]]; then
-  echo "Start from a clean worktree without a rebase in progress." >&2
+stop() {
+  report=$1
   exit 1
-fi
-original_sha=$(git rev-parse --verify "refs/heads/$branch")
-output original_sha "$original_sha"
-output rebased false
+}
 
-stage="fetch upstream nightlies"
-fetch_upstream
-output target_tag "${new_tag##*/}"
-
-stage="verify the upstream nightly base"
-if ! git merge-base --is-ancestor "$new_tag" "$upstream_main"; then
-  echo "The newest nightly is outside upstream main." >&2
-  exit 1
-fi
-if git merge-base --is-ancestor "$new_tag" "$original_sha"; then
-  printf '%s is up to date on %s.\n' "$branch" "${new_tag##*/}"
-  exit 0
-fi
-
-# Both histories share upstream through the previous nightly. At that point
-# the fork's linear history diverges, so only its commits are above the merge base.
-old_base=$(git merge-base "$original_sha" "$new_tag")
-old_tag=$(latest_nightly --merged="$old_base")
-if [[ -z $old_tag || $(git rev-parse "$old_tag^{commit}") != "$old_base" ||
-      -n $(git rev-list --merges "$old_base..$original_sha") ]]; then
-  echo "Expected a linear fork history starting at an older upstream nightly tag." >&2
-  exit 1
-fi
-
-rebasing=true
-stage="rebase $branch onto ${new_tag##*/}"
-last_conflict_commit=
-resolve_conflicts() {
-  local commit path conflicts regenerate=false
-  [[ -d $(git rev-parse --git-path rebase-merge) ]] || return 1
-  commit=$(git rev-parse --verify REBASE_HEAD)
-  if [[ $commit == "$last_conflict_commit" ]]; then
-    return 1
-  fi
-  last_conflict_commit=$commit
-
-  while IFS= read -r -d '' path; do
-    if [[ $path == "$route_tree" ]]; then
-      regenerate=true
-      git rm -f -- "$route_tree"
-    elif [[ $path =~ ^apps/[^/]+/src/i18n/translations/[^/]+\.json$ ]]; then
-      # During a rebase, stage 2 (ours) is the upstream side.
-      if git cat-file -e ":2:$path" 2>/dev/null; then
-        git checkout --ours -- "$path"
-        git add -- "$path"
-      else
-        git rm -- "$path"
-      fi
-    fi
-  done < <(git diff --name-only --diff-filter=U -z)
-
-  git -c rerere.enabled=true -c rerere.autoupdate=true rerere
-  conflicts=$(git diff --name-only --diff-filter=U)
-  if [[ -n $conflicts ]]; then
-    stage="unresolved conflicts in ${conflicts//$'\n'/, }"
-    printf 'Unresolved conflicts:\n%s\n' "$conflicts" >&2
-    return 1
-  fi
-  if [[ $regenerate == true ]]; then
-    stage="install dependencies to regenerate $route_tree"
-    vp i
-    stage="regenerate $route_tree with the web build's TanStack Router plugin"
-    vp run --filter @t3tools/web build
-    git add -- "$route_tree"
+require_clean() {
+  local changes
+  changes=$(git status --porcelain --untracked-files=all)
+  if [[ -n $changes ]]; then
+    printf '%s\n' "$changes" >&2
+    stop 'error worktree is dirty'
   fi
 }
 
-if ! run_rebase --empty=drop --onto "$new_tag" "$old_base" "$branch"; then
-  while true; do
-    resolve_conflicts
-    stage="continue rebase $branch onto ${new_tag##*/}"
+require_linear() {
+  local merges
+  git merge-base --is-ancestor "$1" "$2" || stop 'error accepted upstream base is outside the fork history'
+  merges=$(git rev-list --merges "$1..$2")
+  [[ -z $merges ]] || stop 'error fork history contains merge commits since the upstream base'
+}
+
+fetch_target() {
+  local advertised sha ref tag accepted='' target_ref accepted_ref
+  local private_refs=refs/fork-upstream
+  report='error read upstream nightly tags'
+  advertised=$(git ls-remote --refs --tags --sort=-version:refname upstream 'refs/tags/v*-nightly.*')
+  target_tag=
+  while read -r sha ref; do
+    [[ -n $ref ]] || continue
+    tag=${ref#refs/tags/}
+    [[ $tag =~ $nightly_pattern && $sha =~ $sha_pattern ]] || stop "error invalid upstream nightly tag $tag"
+    if [[ -z $target_tag ]]; then
+      target_tag=$tag
+      target_sha=$sha
+    fi
+    if [[ $tag == "$base_tag" ]]; then
+      accepted=$sha
+    fi
+  done <<< "$advertised"
+  [[ -n $accepted ]] || stop "error accepted upstream tag $base_tag was deleted"
+  [[ $accepted == "$base_sha" ]] || stop "error accepted upstream tag $base_tag moved from $base_sha to $accepted"
+
+  target_ref="$private_refs/tags/$target_tag"
+  accepted_ref="$private_refs/tags/$base_tag"
+  local refspecs=("+refs/heads/main:$private_refs/main" "+refs/tags/$target_tag:$target_ref")
+  if [[ $target_tag != "$base_tag" ]]; then
+    refspecs+=("+refs/tags/$base_tag:$accepted_ref")
+  fi
+  report='error fetch upstream main and nightly tags'
+  git fetch --atomic --no-tags upstream "${refspecs[@]}"
+  [[ $(git rev-parse "$target_ref") == "$target_sha" && $(git rev-parse "$accepted_ref") == "$base_sha" ]] ||
+    stop 'error upstream tags changed during fetch'
+  git merge-base --is-ancestor "$target_sha" "$private_refs/main" ||
+    stop "error upstream tag $target_tag is outside upstream main"
+  git merge-base --is-ancestor "$base_sha" "$target_sha" ||
+    stop "error upstream tag $target_tag regressed from $base_tag"
+  report="error upstream route check for $target_tag"
+  bash scripts/fork/check-routes.sh --upstream "$target_sha"
+}
+
+is_rebasing() {
+  [[ -d $rebase_dir ]]
+}
+
+run_rebase() {
+  # Apply the path policies before rerere, whose cache keys do not include the path.
+  GIT_EDITOR=true git -c rerere.enabled=false rebase "$@"
+}
+
+continue_rebase() {
+  local commit last_commit='' path conflicts
+  while is_rebasing; do
+    report="error continue rebase onto $target_tag"
+    commit=$(git rev-parse --verify REBASE_HEAD)
+    [[ $commit != "$last_commit" ]] || return 1
+    last_commit=$commit
+    git diff --name-only --diff-filter=U -z > "$lock/conflicts"
+    while IFS= read -r -d '' path; do
+      case "$path" in
+        .github/workflows/fork-*.yml) ;;
+        .github/workflows/*.yml|.github/workflows/*.yaml) git rm -f -- "$path" ;;
+        "$route_tree"|apps/*/src/i18n/translations/*.json)
+          git restore --source="$target_sha" --staged --worktree -- "$path"
+          ;;
+      esac
+    done < "$lock/conflicts"
+    git -c rerere.enabled=true -c rerere.autoupdate=true rerere
+    conflicts=$(git diff --name-only --diff-filter=U)
+    if [[ -n $conflicts ]]; then
+      stop "conflict ${conflicts//$'\n'/ }"
+    fi
     if run_rebase --continue; then
       break
     fi
   done
-fi
-rebasing=false
+  [[ $(git symbolic-ref --quiet --short HEAD) == "$candidate" ]]
+}
 
-if [[ ${1:-} != --rebase-only ]]; then
-  stage="vp i"
-  vp i
+prepare_candidate() {
+  report='error enforce upstream-owned file policies'
+  git ls-files -z -- ':(glob).github/workflows/*.yml' ':(glob).github/workflows/*.yaml' \
+    ':(exclude,glob).github/workflows/fork-*.yml' > "$lock/workflows"
+  while IFS= read -r -d '' path; do
+    git rm -- "$path"
+  done < "$lock/workflows"
+  translations=':(glob)apps/*/src/i18n/translations/*.json'
+  if ! git diff --quiet "$target_sha" HEAD -- "$translations"; then
+    git restore --source="$target_sha" --staged --worktree -- "$translations"
+  fi
+  # Candidate commits are checked together by run_checks before the push.
+  if ! git diff --cached --quiet; then
+    git -c core.hooksPath=/dev/null commit -m 'chore(fork): keep upstream workflows removed and translations upstream'
+  fi
+
+  report='check-failed generate-routes'
+  bash scripts/fork/check-routes.sh --generate
+  printf '%s %s\n' "$target_tag" "$target_sha" > "$base_file"
+  git add -- "$base_file" "$route_tree"
+  if ! git diff --cached --quiet; then
+    report='error commit upstream base and regenerated route tree'
+    git -c core.hooksPath=/dev/null commit -m "chore(fork): sync upstream base to $target_tag"
+  fi
+}
+
+check() {
+  report="check-failed $1"
+  printf 'Running %s\n' "$1" >&2
+  shift
+  "$@" || exit 3
+}
+
+run_checks() {
+  local package
+  check upstream-base read_upstream_base
+  [[ $base_tag == "$target_tag" && $base_sha == "$target_sha" ]] || exit 3
+  check seams bash scripts/fork/check-seams.sh
+  check routes bash scripts/fork/check-routes.sh
+  check playwright-chromium node apps/web/node_modules/playwright/cli.js install --only-shell chromium
+  check web-tests bash -c 'cd apps/web && vp test run src/fork src/components/threadActionMenu.logic.test.ts'
+  check thread-command-tests vp test run packages/client-runtime/src/state/threadCommands.test.ts
+  check fork-script-tests vp test run scripts/fork/*.test.ts
   for package in web client-runtime desktop; do
-    stage="typecheck @t3tools/$package"
-    vp run --filter "@t3tools/$package" typecheck
+    check "$package-typecheck" vp run --filter "@t3tools/$package" typecheck
   done
-  for test_path in apps/web/src/fork apps/desktop/src/fork; do
-    if [[ -d $test_path ]]; then
-      stage="vp test run $test_path"
-      vp test run "$test_path"
-    fi
-  done
-  stage="check fork seam registry"
-  bash scripts/fork/check-seams.sh
-fi
+  report='check-failed dirty-after-checks'
+  local changes
+  changes=$(git status --porcelain --untracked-files=all)
+  if [[ -n $changes ]]; then
+    printf '%s\n' "$changes" >&2
+    exit 3
+  fi
+}
 
-stage="verify worktree after checks"
-if [[ -n $(git status --porcelain) ]]; then
-  git status --short >&2
-  echo "Checks left the worktree dirty." >&2
-  exit 1
-fi
-output rebased true
-printf 'Rebased %s onto %s locally.\n' "$branch" "${new_tag##*/}"
+return_to_main() {
+  git switch main
+  git branch -D "$candidate"
+  rm -- "$state"
+}
+
+main() {
+  cd "$(git rev-parse --show-toplevel)"
+  local state rebase_dir original lease target_tag target_sha candidate base_tag base_sha
+  local mode=${1:-} head belongs_to_sync=false
+  state=$(git rev-parse --git-path fork-sync-state)
+  rebase_dir=$(git rev-parse --git-path rebase-merge)
+  head=$(git symbolic-ref --quiet --short HEAD || true)
+  [[ $# -le 1 ]] || stop 'error expected no arguments, --resume or --abort'
+  report='error another sync is running'
+  mkdir "$state.lock"
+  lock="$state.lock"
+  report="error load sync configuration"
+  if [[ $mode == --resume || $mode == --abort ]]; then
+    # The pipeline scripts may not have been replayed at a stopped rebase.
+    git show refs/heads/main:scripts/fork/upstream-base.sh > "$lock/upstream-base.sh"
+    # shellcheck source=scripts/fork/upstream-base.sh
+    source "$lock/upstream-base.sh"
+  else
+    # shellcheck source=scripts/fork/upstream-base.sh
+    source scripts/fork/upstream-base.sh
+  fi
+  case "$mode" in
+    "")
+      [[ $head == main ]] || stop 'error check out main before starting a sync'
+      [[ ! -e $state ]] || stop 'error pending sync; use --resume or --abort'
+      for operation in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD sequencer; do
+        [[ ! -e $(git rev-parse --git-path "$operation") ]] || stop "error Git operation in progress: $operation"
+      done
+      require_clean
+      report='error read committed upstream base'
+      read_upstream_base
+      original=$(git rev-parse HEAD)
+      require_linear "$base_sha" "$original"
+      report='error fetch origin main for the push lease'
+      git fetch --no-tags origin refs/heads/main
+      lease=$(git rev-parse FETCH_HEAD)
+      git merge-base --is-ancestor "$lease" "$original" ||
+        stop 'error origin main has commits absent from local main'
+      fetch_target
+      candidate="sync/$target_tag"
+      report="error create candidate branch $candidate"
+      git switch -c "$candidate"
+      printf '%s %s %s %s\n' "$original" "$lease" "$target_tag" "$target_sha" > "$state"
+      if [[ $target_sha != "$base_sha" ]]; then
+        report="error rebase onto $target_tag"
+        if ! run_rebase --no-autostash --no-update-refs --empty=drop --onto "$target_sha" "$base_sha"; then
+          is_rebasing || exit 1
+          continue_rebase
+        fi
+      fi
+      ;;
+    --resume|--abort)
+      report='error read pending sync state'
+      [[ -f $state ]] || stop 'error no pending sync'
+      read -r original lease target_tag target_sha < "$state"
+      [[ $original =~ $sha_pattern && $lease =~ $sha_pattern &&
+         $target_tag =~ $nightly_pattern && $target_sha =~ $sha_pattern ]] || stop 'error invalid pending sync state'
+      candidate="sync/$target_tag"
+      [[ $(git rev-parse refs/heads/main) == "$original" ]] || stop 'error local main changed during sync'
+      if is_rebasing && [[ $(cat "$rebase_dir/head-name") == "refs/heads/$candidate" ]]; then
+        belongs_to_sync=true
+      fi
+      if "$belongs_to_sync"; then
+        if [[ $mode == --abort ]]; then
+          report='error abort rebase'
+          run_rebase --abort
+        else
+          continue_rebase
+        fi
+      else
+        [[ $head == "$candidate" ]] || stop "error expected to be on $candidate"
+        require_clean
+      fi
+      if [[ $mode == --abort ]]; then
+        report='error restore main'
+        return_to_main
+        stop 'error sync aborted'
+      fi
+      ;;
+    *) stop 'error expected no arguments, --resume or --abort' ;;
+  esac
+
+  require_clean
+  require_linear "$target_sha" HEAD
+  check dependencies vp i
+  report='error read upstream base on candidate'
+  read_upstream_base
+  if [[ $base_sha != "$target_sha" || $base_tag != "$target_tag" ]]; then
+    prepare_candidate
+  fi
+  run_checks
+
+  report='error finalize sync'
+  [[ $(git rev-parse refs/heads/main) == "$original" ]] || stop 'error local main changed during sync'
+  if [[ $(git rev-parse HEAD) == "$lease" ]]; then
+    report='error verify origin main after checks'
+    local remote_main
+    remote_main=$(git ls-remote --exit-code origin refs/heads/main)
+    [[ ${remote_main%%$'\t'*} == "$lease" ]] || stop push-rejected
+    return_to_main
+    stop up-to-date
+  fi
+  if ! git push --force-with-lease="refs/heads/main:$lease" origin HEAD:refs/heads/main; then
+    stop push-rejected
+  fi
+  git branch -f main HEAD
+  return_to_main
+  stop "pushed $target_tag"
+}
+
+main "$@"
