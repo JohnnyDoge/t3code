@@ -72,6 +72,18 @@ version. If the newest official nightly has moved to a newer version base, sync 
 before releasing. The release tag targets the release repository and the notes identify the fork
 commit used to build the installers.
 
+The workflow uses GitHub-hosted runners. Ubuntu 24.04 builds the shared JS bundle
+and the Linux x64 CLI archive embedded in the Windows installer for WSL. Ubuntu 24.04
+also builds the Windows installer and its resource monitor, which are checked on
+Windows Server 2025. The macOS ARM64 job uses `macos-26` and checks for a macOS 26 or
+newer SDK before compiling the Apple Speech helper. It opens the signed app from
+the DMG against a seeded test database.
+
+T3 Connect uses the public Clerk and relay configuration from the fork commit's
+`.env.example`. These are the production identifiers used by upstream, so signing
+in gives access to the same linked environments. The self-signed macOS build
+uses system-browser sign-in and lacks Apple-provisioned native passkeys.
+
 The workflow validates the versions, file names, SHA-512 hashes, sizes and blockmaps in
 `nightly-mac.yml` and `nightly.yml` before publishing. Once the prerelease assets are public, it
 updates `update-feed/nightly.json` to point to the newest fork release. A run that skips building

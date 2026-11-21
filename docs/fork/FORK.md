@@ -253,6 +253,12 @@ alone.
   The workflow publishes a GitHub prerelease with the electron-builder update metadata.
   After the validated assets are public, GitHub Actions updates `update-feed/nightly.json`
   so the newest fork nightly is discoverable.
+- **Build runners**: GitHub-hosted Ubuntu 24.04 builds the shared desktop JS bundle and
+  Linux x64 CLI archive for WSL. The macOS 26 ARM64 runner packages and launches the
+  signed DMG. Ubuntu 24.04 cross-builds the Windows NSIS installer with the WSL archive,
+  then Windows Server 2025 runs the packaged native checks before publication.
+- **T3 Connect**: builds use the public production Clerk publishable key, JWT template,
+  OAuth client ID and relay URL from upstream's `.env.example`.
 - macOS: no Apple Developer account. Builds are signed with one **stable self-signed
   code-signing certificate** (stored as CI secrets), so every build has the same
   designated requirement. Notarization is skipped. Squirrel.Mac's check was verified to
