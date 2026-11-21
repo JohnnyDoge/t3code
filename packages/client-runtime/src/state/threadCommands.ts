@@ -53,6 +53,8 @@ import {
   reorderPinnedThread,
   reorderActiveThread,
   setThreadAutoSettle,
+  // fork(board): bind the stock tag command to the thread's environment.
+  setThreadTag,
   settleThread,
   snoozeThread,
   startThreadTurn,
@@ -342,6 +344,13 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    // fork(board): share the thread command scheduler and environment routing.
+    setTag: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-tag",
+      execute: setThreadTag,
+      scheduler,
+      concurrency,
+    }),
     updateMetadata: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:update-metadata",
       execute: updateThreadMetadata,
@@ -601,6 +610,15 @@ export function createThreadEnvironmentAtoms<R, E>(
     mcpSignedInAtom,
     snapshotAtom: optimistic.snapshotAtom,
     pendingThreadIdsAtom: optimistic.pendingThreadIdsAtom,
+    // fork(board): keep tag changes visible until the shell reaches the reply's sequence.
+    setTag: optimistic.wrap(commands.setTag, (thread, { tag, tagged }) => {
+      const tags = thread.tags ?? [];
+      if (tags.includes(tag) === tagged) return thread;
+      return {
+        ...thread,
+        tags: tagged ? [...tags, tag] : tags.filter((current) => current !== tag),
+      };
+    }),
     pendingSyncAtom: triage.pendingSyncAtom,
     // Queued inside the optimistic update, so it stays shown until the queued entry replaces it.
     settle: optimistic.wrap(

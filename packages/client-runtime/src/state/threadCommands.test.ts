@@ -454,6 +454,9 @@ describe("remote thread lifecycle commands", () => {
     ["setAutoSettle", { enabled: false }, { autoSettleDisabledAt: expect.any(Object) }],
     ["reorderPin", { orderKey: "b" }, { pinOrderKey: "b" }],
     ["reorderActive", { orderKey: "b" }, { activeOrderKey: "b" }],
+    // fork(board): cover legacy shells and removal from shells with duplicate tags.
+    ["setTag", { tag: "kb:todo:none", tagged: true }, { tags: ["kb:todo:none"] }],
+    ["setTag", { tag: "kb:todo:none", tagged: false }, { tags: ["priority"] }],
   ] as const;
 
   it.effect.each(actions)(
@@ -476,6 +479,10 @@ describe("remote thread lifecycle commands", () => {
               ...(action === "unpin" || action === "settle"
                 ? { pinnedAt: NOW, pinOrderKey: "a" }
                 : {}),
+              // fork(board): remove all matches while preserving other tags.
+              ...(action === "setTag" && !input.tagged
+                ? { tags: ["priority", input.tag, input.tag] }
+                : {}),
             },
           ],
         };
@@ -491,6 +498,9 @@ describe("remote thread lifecycle commands", () => {
                 enabled: false,
                 orderKey: "a",
                 snoozedUntil: "2099-01-01T00:00:00.000Z",
+                // fork(board): inputs shared by the command union.
+                tag: "kb:todo:none",
+                tagged: true,
                 ...input,
               },
             }),
@@ -499,6 +509,15 @@ describe("remote thread lifecycle commands", () => {
         );
         expect(h.registry.get(h.visibleAtom)?.threads[0]).toMatchObject(expected);
         const request = yield* Queue.take(h.requests);
+        // fork(board): pin the stock command's wire payload.
+        if (action === "setTag") {
+          expect(request.command).toEqual({
+            type: "thread.tag.set",
+            commandId: CommandId.make(action),
+            threadId: THREAD_ID,
+            ...input,
+          });
+        }
         expect(h.registry.get(source)).toBe(initial);
         yield* Deferred.fail(request.reply, new Error("Remote rejected the action"));
         expect((yield* Fiber.join(result))._tag).toBe("Failure");
