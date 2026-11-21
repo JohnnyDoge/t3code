@@ -83,6 +83,8 @@ import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
 // fork(board): The packager embeds the fork identity in the app manifest.
 import { configureForkDesktopApp } from "./fork/identity.ts";
+// fork(board)
+import { layerWithForkInstanceFeedback } from "./fork/SingleInstance.ts";
 
 if (process.argv.includes("--version")) {
   try {
@@ -244,7 +246,7 @@ const layerDesktopClerk = DesktopClerk.layer.pipe(
   Layer.provideMerge(ElectronShell.layer),
   Layer.provideMerge(layerDesktopEnvironment),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-  Layer.provideMerge(ElectronApp.layer),
+  Layer.provideMerge(isFork ? layerWithForkInstanceFeedback : ElectronApp.layer), // fork(board)
 );
 
 const layerDesktopApplicationRuntime = layerDesktopApplication.pipe(
