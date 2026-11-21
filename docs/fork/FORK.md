@@ -6,7 +6,7 @@ the owner's daily driver on two machines (a Mac mini, Apple Silicon, and a Windo
 that are connected to each other through T3 Connect.
 
 The upstream project moves every day. **Every decision in this fork is judged first by
-how well it survives a daily rebase onto upstream.** Read the "Survival rules" section
+how well it survives the weekly step-by-step rebase onto upstream.** Read the "Survival rules" section
 before you change anything.
 
 Reference: upstream PR pingdotgg/t3code#34779 ("task board with threads grouped by
