@@ -217,6 +217,14 @@ export function planBoardDrop(
   return { accepted: true, ops };
 }
 
+export function planAfterSnooze(
+  thread: BoardThread,
+  tags: ReadonlyArray<string>,
+): ReadonlyArray<BoardOp> {
+  const cleanup = planTagChanges(tags, thread.latestRun?.runId ?? null);
+  return thread.settledOverride === "settled" ? [{ kind: "unsettle" }, ...cleanup] : cleanup;
+}
+
 export function canMarkSeen(
   thread: BoardThread,
   tags: ReadonlyArray<string>,

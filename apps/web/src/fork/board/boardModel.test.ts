@@ -10,6 +10,7 @@ import {
   canMarkUnseen,
   groupThreadsByColumn,
   isBoardTag,
+  planAfterSnooze,
   planBoardDrop,
   planMarkSeen,
   planMarkUnseen,
@@ -336,6 +337,18 @@ describe("planBoardDrop", () => {
     const thread = makeBoardThread({ latestRun: latestRun({ status }) });
     expect(planBoardDrop(thread, [], "review", now)).toEqual({ accepted: false });
   });
+});
+
+it("unsettles and cleans stale marks after snoozing, preserving current and non-board tags", () => {
+  const tags = [seenTag(runId), todoTag(runId), seenTag(oldRunId), todoTag(null), "keep"];
+  const cleanup = [removeTag(seenTag(oldRunId)), removeTag(todoTag(null))];
+
+  expect(planAfterSnooze(makeBoardThread({ ...completed, ...settled }), tags)).toEqual([
+    { kind: "unsettle" },
+    ...cleanup,
+  ]);
+  expect(planAfterSnooze(makeBoardThread(completed), tags)).toEqual(cleanup);
+  expect(planAfterSnooze(makeBoardThread(), [])).toEqual([]);
 });
 
 describe("seen actions", () => {

@@ -664,7 +664,8 @@ type SidebarThreadRowProps = {
 };
 
 // Mounted only while renaming, so each rename starts uncommitted.
-function ThreadRenameInput(props: {
+// fork(board): reuse inline thread renaming on board cards.
+export function ThreadRenameInput(props: {
   title: string;
   onTitleChange: (title: string) => void;
   onCommit: () => void;
