@@ -30,6 +30,8 @@ import {
   updateReleasePackageVersions,
 } from "./update-release-package-versions.ts";
 import { applyWebBrandAssets } from "./apply-web-brand-assets.ts";
+// fork(board): Electron-builder loads the fork signing hook by filename.
+import { forkMacSigningBuildConfig } from "./fork/build-desktop.ts";
 import {
   BRAND_ASSET_PATHS,
   resolveWebAssetBrandForChannel,
@@ -1648,6 +1650,9 @@ const AzureTrustedSigningOptionsConfig = Config.all({
   ),
 });
 
+// fork(board): Self-signed builds have no Apple provisioning profile.
+const ForkMacSigning = Config.Boolean("T3CODE_FORK_MAC_SIGNING").pipe(Config.withDefault(false));
+
 const BuildEnvConfig = Config.all({
   platform: Config.schema(BuildPlatform, "T3CODE_DESKTOP_PLATFORM").pipe(Config.option),
   target: Config.String("T3CODE_DESKTOP_TARGET").pipe(Config.option),
@@ -2876,6 +2881,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "mac") {
     const path = yield* Path.Path;
     const repoRoot = yield* RepoRoot;
+    // fork(board): Select the fork signer only for the fork packaging entry point.
+    const forkSigning = signed && (yield* ForkMacSigning);
     buildConfig.mac = {
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
@@ -2923,7 +2930,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           role: "Viewer",
         },
       ],
-      ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
+      // fork(board): Use the fork signing hook and skip notarization.
+      ...(forkSigning
+        ? forkMacSigningBuildConfig
+        : signed
+          ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") }
+          : {}),
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
@@ -3908,7 +3920,8 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   yield* fs.copy(stageResourcesDir, stageProdResourcesDir);
 
   const configuredMacPasskeySigning =
-    options.platform === "mac" && options.signed
+    // fork(board): Apple-only passkey entitlements require an Apple-issued profile.
+    options.platform === "mac" && options.signed && !(yield* ForkMacSigning)
       ? yield* Effect.try({
           try: () => resolveMacPasskeySigningConfiguration(loadRepoEnv({ repoRoot })),
           catch: MacPasskeySigningConfigurationResolutionError.fromCause,
