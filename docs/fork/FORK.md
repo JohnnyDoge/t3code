@@ -258,7 +258,8 @@ alone.
   signed DMG. Ubuntu 24.04 cross-builds the Windows NSIS installer with the WSL archive,
   then Windows Server 2025 runs the packaged native checks before publication.
 - **T3 Connect**: builds use the public production Clerk publishable key, JWT template,
-  OAuth client ID and relay URL from upstream's `.env.example`.
+  OAuth client ID and relay URL from upstream's `.env.example`. Clerk returns to
+  `t3code-fork://app/` in the fork.
 - macOS: no Apple Developer account. Builds are signed with one **stable self-signed
   code-signing certificate** (stored as CI secrets), so every build has the same
   designated requirement. Notarization is skipped. Squirrel.Mac's check was verified to
@@ -275,9 +276,11 @@ alone.
   wraps `scripts/build-desktop-artifact.ts` and must not fork its logic.
 - Windows: unsigned NSIS. electron-updater skips publisher verification when no
   `publisherName` is configured.
-- First install on each machine replaces the official T3 Code (Nightly) app. The
-  bundle id, app name and user data locations must stay identical to the official
-  nightly, so existing threads, settings and `~/.t3` keep working.
+- **T3 Code Fork (Nightly)** installs alongside the official app. Its bundle and
+  Windows application ID are `com.t3tools.t3code.fork`. It uses `~/.t3-fork` and its
+  own Electron profile. The nightly version still selects the Nightly stage and
+  artwork. Existing threads stay on the official server. Add that server as an
+  environment in the fork using the steps in [Fork operations](OPERATIONS.md).
 
 ---
 
@@ -287,8 +290,9 @@ alone.
   repository. Never quit, replace, re-sign or modify `/Applications/T3 Code (Nightly).app`,
   and never touch `~/.t3`, `~/Library/Application Support/*t3*`, or the login keychain
   entries of T3. If a test has to launch a desktop build, it must use fully isolated
-  data directories and ports. Find the supported environment variables in the code
-  first; if you cannot prove isolation, do not launch the build and report why.
+  data directories and ports. The fork ignores `T3CODE_HOME`, and the smoke
+  runner sets `T3CODE_FORK_SCRATCH_PARENT` to seed a scratch `.t3-fork` home. Use a
+  disposable OS account or runner to isolate Electron's profile and credentials too.
 - Do not push, create repositories, change GitHub settings or secrets, or open PRs or
   issues unless your task explicitly says so.
 - Keep GitHub Actions disabled in the code repository and preserve upstream's `.github/`
@@ -302,21 +306,37 @@ alone.
 
 ## 6. Seam registry (upstream files touched by the fork)
 
-| Upstream file                                              | Seam                                                                                                                          | Why                                                       |
-| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| `apps/web/src/components/Sidebar.tsx`                      | Register the shared thread menu, add an off-list lookup, and delegate board menu state, marks, and card rename                | Board cards reuse the Sidebar thread menu                 |
-| `apps/web/src/components/sidebar/SidebarChrome.tsx`        | Mount the board header button and its width probe                                                                             | Board entry button at the right edge                      |
-| `apps/web/src/components/sidebar/mainAppLocation.ts`       | `/board` does not overwrite the main-app return location                                                                      | Button toggles back                                       |
-| `apps/web/src/components/CommandPalette.tsx`               | Append the fork-owned palette action                                                                                          | Open task board                                           |
-| `apps/web/src/components/threadActionMenu.logic.ts`        | Typed extension items after Mark unread pass through the existing permission filter                                           | Mark as seen / unseen                                     |
-| `apps/web/src/components/threadActionMenu.logic.test.ts`   | Cover extension item ordering and permission gating                                                                           | Verify the menu insertion point                           |
-| `apps/web/src/hooks/useThreadActionMenu.ts`                | Insert and dispatch board marks via the fork menu hook                                                                        | Chat header menu                                          |
-| `apps/web/src/hooks/useThreadActionMenu.test.ts`           | Stub the board menu hook                                                                                                      | Keep upstream permission tests independent of board hooks |
-| `apps/web/src/components/chat/ChatHeader.tsx`              | Mount BoardSeenButton                                                                                                         | Mark as seen in the chat                                  |
-| `apps/web/src/components/HistorySwipeNavigation.tsx`       | Honor `data-history-swipe="off"` on scrollers                                                                                 | Board's horizontal scroll must not navigate back          |
-| `apps/web/src/components/sidebar/SidebarThreadRow.tsx`     | Export `ThreadRenameInput`                                                                                                    | Rename in place on board cards                            |
-| `apps/web/src/routes/_chat.board.tsx`                      | New route file mounting `TaskBoardPage` (`routeTree.gen.ts` is regenerated, not registered)                                   | `/board` route                                            |
-| `scripts/build-desktop-artifact.ts`                        | `T3CODE_FORK_MAC_SIGNING` selects the fork's self-signed signing hook, skips notarization and Apple-only passkey entitlements | Self-signed macOS builds (no Apple Developer account)     |
-| `packages/client-runtime/src/operations/commands.ts`       | `setThreadTag` dispatching stock `thread.tag.set`                                                                             | Write board tags                                          |
-| `packages/client-runtime/src/state/threadCommands.ts`      | `setTag` command with optimistic shell update                                                                                 | Cards move instantly                                      |
-| `packages/client-runtime/src/state/threadCommands.test.ts` | Cases for `setTag`                                                                                                            | Covers the optimistic update                              |
+| Upstream file                                                  | Seam                                                                                                           | Why                                                       |
+| -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `apps/web/src/components/Sidebar.tsx`                          | Register the shared thread menu, add an off-list lookup, and delegate board menu state, marks, and card rename | Board cards reuse the Sidebar thread menu                 |
+| `apps/web/src/components/sidebar/SidebarChrome.tsx`            | Mount the board header button and its width probe                                                              | Board entry button at the right edge                      |
+| `apps/web/src/components/sidebar/mainAppLocation.ts`           | `/board` does not overwrite the main-app return location                                                       | Button toggles back                                       |
+| `apps/web/src/components/CommandPalette.tsx`                   | Append the fork-owned palette action                                                                           | Open task board                                           |
+| `apps/web/src/components/threadActionMenu.logic.ts`            | Typed extension items after Mark unread pass through the existing permission filter                            | Mark as seen / unseen                                     |
+| `apps/web/src/components/threadActionMenu.logic.test.ts`       | Cover extension item ordering and permission gating                                                            | Verify the menu insertion point                           |
+| `apps/web/src/hooks/useThreadActionMenu.ts`                    | Insert and dispatch board marks via the fork menu hook                                                         | Chat header menu                                          |
+| `apps/web/src/hooks/useThreadActionMenu.test.ts`               | Stub the board menu hook                                                                                       | Keep upstream permission tests independent of board hooks |
+| `apps/web/src/components/chat/ChatHeader.tsx`                  | Mount BoardSeenButton                                                                                          | Mark as seen in the chat                                  |
+| `apps/web/src/components/HistorySwipeNavigation.tsx`           | Honor `data-history-swipe="off"` on scrollers                                                                  | Board's horizontal scroll must not navigate back          |
+| `apps/web/src/components/sidebar/SidebarThreadRow.tsx`         | Export `ThreadRenameInput`                                                                                     | Rename in place on board cards                            |
+| `apps/web/src/routes/_chat.board.tsx`                          | New route file mounting `TaskBoardPage` (`routeTree.gen.ts` is regenerated, not registered)                    | `/board` route                                            |
+| `apps/desktop/src/main.ts`                                     | Detect the fork from its packaged product name                                                                 | Leave other builds unchanged                              |
+| `apps/desktop/src/app/DesktopEnvironment.ts`                   | Resolve the fork's home, runtime branding and app model ID                                                     | Keep state and OS identity separate                       |
+| `apps/desktop/src/app/DesktopUserData.ts`                      | Resolve the fork profile before the single-instance lock                                                       | Use separate Chromium state without legacy migration      |
+| `apps/desktop/src/app/DesktopLegacyLocalStorage.ts`            | Skip the V1 browser state import for the fork                                                                  | Keep official profile state private                       |
+| `apps/desktop/src/app/DesktopApp.ts`                           | Scan from the fork backend port and register its renderer scheme                                               | Start alongside the official server                       |
+| `apps/desktop/src/app/DesktopClerk.ts`                         | Set the fork runtime name early and use its redirect scheme                                                    | Separate Safe Storage and OAuth callbacks                 |
+| `apps/desktop/src/app/DesktopClerk.test.ts`                    | Check the fork profile, app name and callback scheme before Clerk starts                                       | Verify early credential and lock isolation                |
+| `apps/desktop/src/app/DesktopLifecycle.ts`                     | Drop fork deep-link arguments when relaunching                                                                 | Avoid replaying handled links                             |
+| `apps/desktop/src/electron/ElectronProtocol.ts`                | Derive the renderer scheme and URL for a fork build                                                            | Give each app a distinct protocol                         |
+| `apps/desktop/src/window/DesktopWindow.ts`                     | Load the fork's renderer URL                                                                                   | Use the registered fork protocol                          |
+| `apps/desktop/src/backend/DesktopBackendConfiguration.ts`      | Pass the fork's T3 home to the native and WSL servers                                                          | Protect official databases on the host and in WSL         |
+| `apps/desktop/src/backend/DesktopBackendConfiguration.test.ts` | Exercise WSL launch with an official T3 home from the login shell                                              | Verify staging, launch, and pruning use the fork home     |
+| `apps/desktop/src/app/DesktopCliCommand.ts`                    | Skip shared CLI installation and PATH changes for the fork                                                     | Leave the official `t3` command in place                  |
+| `apps/desktop/src/app/DesktopCliShim.ts`                       | Pin the fork's private shim to its data home                                                                   | Ignore an inherited official T3 home                      |
+| `scripts/build-desktop-artifact.ts`                            | Select the fork package identity and the self-signed macOS build configuration                                 | Separate installation, protocols, and updater identities  |
+| `scripts/smoke-desktop-app.ts`                                 | Seed and pass a scratch T3 home to the fork release smoke test                                                 | Verify the packaged app against isolated state            |
+| `scripts/verify-windows-desktop-artifact.ts`                   | Accept the fork identity for the Windows native verifier                                                       | Locate the fork executable on the Windows test runner     |
+| `packages/client-runtime/src/operations/commands.ts`           | `setThreadTag` dispatching stock `thread.tag.set`                                                              | Write board tags                                          |
+| `packages/client-runtime/src/state/threadCommands.ts`          | `setTag` command with optimistic shell update                                                                  | Cards move instantly                                      |
+| `packages/client-runtime/src/state/threadCommands.test.ts`     | Cases for `setTag`                                                                                             | Covers the optimistic update                              |

@@ -33,6 +33,8 @@ import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "../wsl/DesktopWslServerTree.ts";
+// fork(board)
+import { resolveForkWslHome } from "../fork/identity.ts";
 
 export class DesktopBackendObservabilitySettingsReadError extends Schema.TaggedError<DesktopBackendObservabilitySettingsReadError>()(
   "DesktopBackendObservabilitySettingsReadError",
@@ -381,6 +383,18 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
     } as const;
   }
 
+  // fork(board): Resolve Linux's own fork home before staging or starting the server.
+  const forkWslHome = environment.isFork
+    ? resolveForkWslHome(Option.getOrUndefined(yield* wslEnv.getUserHome(runningDistro)))
+    : undefined;
+  if (environment.isFork && forkWslHome === undefined) {
+    return {
+      _tag: "Failed",
+      reason: "Could not resolve the WSL home for T3 Code Fork.",
+      fatal: true,
+    } as const;
+  }
+
   const nodePtyOptions = {
     allowBuild: input.allowBuild,
     nodeEngineRange: serverPackageJson.engines.node,
@@ -435,7 +449,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
       const runtime = yield* wslEnv.prepareRuntime(
         runningDistro,
         input.runtimeArchive,
-        stagedProbe.t3Home,
+        forkWslHome ?? stagedProbe.t3Home, // fork(board)
       );
       if (runtime.ok) {
         yield* wslServerTree.cleanupLegacy;
@@ -445,7 +459,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
           windowsEntryPath: environment.backendEntryPath,
           runtime: { kind: "executable", entryPath: `${runtime.linuxAppRoot}/t3` },
           resolvedPath: stagedProbe.resolvedPath,
-          t3Home: stagedProbe.t3Home,
+          t3Home: forkWslHome ?? stagedProbe.t3Home, // fork(board)
           runtimeId: input.runtimeArchive.runtimeId,
         } as const;
       }
@@ -492,7 +506,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
       linuxEntryPath: `${mounted.linuxAppRoot}/apps/server/dist/bin.mjs`,
     },
     resolvedPath: nodePtyResult.resolvedPath,
-    t3Home: nodePtyResult.t3Home,
+    t3Home: forkWslHome ?? nodePtyResult.t3Home, // fork(board)
   } as const;
 });
 
@@ -577,6 +591,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       cwd: environment.backendCwd,
       env: {
         ...backendChildEnvPatch(),
+        ...(environment.isFork ? { T3CODE_HOME: environment.baseDir } : {}), // fork(board): Env outranks bootstrap.
         ELECTRON_RUN_AS_NODE: "1",
         T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING: "1",
         T3CODE_CLI_PATH: Option.getOrUndefined(input.cliPath),

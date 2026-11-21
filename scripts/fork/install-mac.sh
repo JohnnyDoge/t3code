@@ -7,7 +7,8 @@ fail() {
   exit 1
 }
 
-target='/Applications/T3 Code (Nightly).app'
+official_target='/Applications/T3 Code (Nightly).app'
+target='/Applications/T3 Code Fork (Nightly).app'
 repo=${T3CODE_DESKTOP_UPDATE_REPOSITORY:-JohnnyDoge/t3code-fork-releases}
 dry_run=false
 fork_cert_sha=8AAF3B790302EEBCE7A8931EC62A51E3462798EA
@@ -33,19 +34,16 @@ done
 [[ "$target" = /* ]] || target="$PWD/$target"
 parent=$(cd "$(dirname "$target")" && pwd -P)
 target="$parent/${target##*/}"
-bundle_id=com.t3tools.t3code
+[[ "$target" != "$official_target" ]] || fail "Refusing the official T3 Code app path."
+bundle_id=com.t3tools.t3code.fork
 installed_requirement=
 if [[ -e "$target" || -L "$target" ]]; then
   [[ ! -L "$target" && -d "$target" ]] || fail "Refusing to replace a symlink or non-bundle at $target"
   old_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$target/Contents/Info.plist")
   [[ "$old_id" = "$bundle_id" ]] || fail "Unexpected bundle identifier at $target"
-  installed_signature=$(/usr/bin/codesign -d --verbose=4 -r- "$target" 2>&1)
-  installed_sha=$(tr '[:upper:]' '[:lower:]' <<< "$fork_cert_sha")
-  if grep -Fqx 'Authority=T3 Code Fork Signing' <<< "$installed_signature" ||
-    grep -Fiq "$installed_sha" <<< "$installed_signature"; then
-    installed_requirement=$(sed -n 's/^designated => //p' <<< "$installed_signature")
-    [[ -n "$installed_requirement" ]] || fail "Missing designated requirement for the installed fork."
-  fi
+  installed_signature=$(/usr/bin/codesign -d -r- "$target" 2>&1)
+  installed_requirement=$(sed -n 's/^designated => //p' <<< "$installed_signature")
+  [[ -n "$installed_requirement" ]] || fail "Missing designated requirement for the installed fork."
 fi
 
 if "$dry_run"; then

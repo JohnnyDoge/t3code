@@ -23,14 +23,16 @@ const verifyWindowsDesktopArtifactCli = Command.make("verify-windows-desktop-art
   buildVersion: Flag.String("build-version").pipe(
     Flag.withDescription("The artifact's build version."),
   ),
+  fork: Flag.Boolean("fork").pipe(Flag.withDefault(false)), // fork(board)
   verbose: Flag.Boolean("verbose").pipe(Flag.withDefault(false)),
 }).pipe(
   Command.withDescription("Verify a Windows desktop artifact's packaged natives load."),
-  Command.withHandler(({ appDir, arch, buildVersion, verbose }) =>
+  Command.withHandler(({ appDir, arch, buildVersion, verbose, fork }) =>
+    // fork(board)
     Effect.gen(function* () {
       yield* verifyWindowsPackagedRuntime({
         packagedAppDir: appDir,
-        appExecutableName: `${resolveDesktopProductName(buildVersion)}.exe`,
+        appExecutableName: `${resolveDesktopProductName(buildVersion, fork)}.exe`, // fork(board)
         targetArch: arch,
         verbose,
       });

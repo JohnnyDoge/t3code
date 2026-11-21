@@ -65,12 +65,20 @@ const layerDesktopClerk = (
   },
   listeners = new Map<string, (...args: unknown[]) => void>(),
   stateDir = clerkStateDir,
+  isFork = false, // fork(board)
 ) => {
   const environment = DesktopEnvironment.DesktopEnvironment.of({
     stateDir,
     isDevelopment,
     appDataDirectory: "/tmp/app-data",
     platform,
+    isFork, // fork(board)
+    branding: DesktopEnvironment.resolveDesktopAppBranding({
+      // fork(board)
+      isDevelopment,
+      appVersion: "0.1.12-nightly.20261121.1",
+      isFork,
+    }),
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
 
   const electronApp = {
@@ -78,6 +86,7 @@ const layerDesktopClerk = (
       Effect.sync(() => {
         events.push(`setPath:${name}:${value}`);
       }),
+    setName: (name: string) => Effect.sync(() => events.push(`setName:${name}`)), // fork(board)
     requestSingleInstanceLock: Effect.sync(() => {
       events.push("requestSingleInstanceLock");
       return requestSingleInstanceLockMock();
@@ -119,6 +128,14 @@ describe("DesktopClerk", () => {
   });
 
   it.each([
+    // fork(board): Prove name and profile isolation before the callback bridge opens.
+    {
+      name: "packaged fork",
+      isDevelopment: false,
+      platform: "darwin" as const,
+      userData: "/tmp/app-data/t3code-fork",
+      isFork: true,
+    },
     {
       name: "packaged macOS",
       isDevelopment: false,
@@ -145,7 +162,8 @@ describe("DesktopClerk", () => {
     },
   ])(
     "creates the bridge before startup can yield to the event loop ($name)",
-    ({ isDevelopment, platform, userData }) => {
+    ({ isDevelopment, platform, userData, isFork = false }) => {
+      // fork(board)
       const events: string[] = [];
       storageMock.mockReturnValue(storageAdapter);
       createClerkBridgeMock.mockImplementation(() => {
@@ -156,13 +174,23 @@ describe("DesktopClerk", () => {
       Effect.runSync(
         Effect.scoped(
           Layer.build(
-            layerDesktopClerk(isDevelopment, events, platform, DesktopPreReadyFileSystem.layer),
+            layerDesktopClerk(
+              isDevelopment,
+              events,
+              platform,
+              DesktopPreReadyFileSystem.layer,
+              undefined,
+              undefined,
+              undefined,
+              isFork,
+            ), // fork(board)
           ),
         ),
       );
 
       assert.deepEqual(events, [
         `setPath:userData:${userData}`,
+        ...(isFork ? ["setName:T3 Code Fork Nightly"] : []), // fork(board)
         "requestSingleInstanceLock",
         "on:second-instance",
         "on:open-url",
@@ -172,6 +200,14 @@ describe("DesktopClerk", () => {
         [{ path: NodePath.join(NodePath.resolve(clerkStateDir), "clerk") }],
       ]);
       assert.strictEqual(createClerkBridgeMock.mock.calls[0]?.[0]?.storage, storageAdapter);
+      if (isFork) {
+        // fork(board)
+        assert.deepEqual(createClerkBridgeMock.mock.calls[0]?.[0]?.renderer, {
+          scheme: "t3code-fork",
+          host: "app",
+          privileges: { codeCache: true },
+        });
+      }
     },
   );
 

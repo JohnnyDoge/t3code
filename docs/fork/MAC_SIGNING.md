@@ -20,34 +20,35 @@ Notarization and secure timestamps are disabled.
 Run `scripts/fork/install-mac.sh --dry-run` to validate the latest nightly prerelease.
 The script defaults to `JohnnyDoge/t3code-fork-releases`. Use `--repo <owner/repo>` or
 `T3CODE_DESKTOP_UPDATE_REPOSITORY` to select a different release repository.
-Run it without `--dry-run` to install. The default target is
-`/Applications/T3 Code (Nightly).app`. The script reads the release tag from
+Run it without `--dry-run` to install. The target is
+`/Applications/T3 Code Fork (Nightly).app`. The script refuses the official
+`/Applications/T3 Code (Nightly).app` path and any existing target with a different
+bundle ID. The script reads the release tag from
 `update-feed/nightly.json` and verifies the ZIP against `nightly-mac.yml`. Before clearing
 quarantine, it checks the unpacked bundle against the fork certificate's pinned leaf SHA-1
 (`8AAF3B790302EEBCE7A8931EC62A51E3462798EA`) and, when replacing a fork install, against
 the installed bundle's designated requirement. The previous bundle stays beside the target as
-`*.app.backup-<date>`. The script then opens the installed bundle. The installed app and the fork use
-`T3 Code (Nightly)` and bundle ID `com.t3tools.t3code`. The packaged profile resolves to
-`~/Library/Application Support/t3code-v2`, and the default T3 state stays in
-`~/.t3/userdata`.
+`*.app.backup-<date>`. The script then opens the installed bundle. The fork uses
+bundle ID `com.t3tools.t3code.fork`, Electron profile
+`~/Library/Application Support/t3code-fork`, and T3 state in
+`~/.t3-fork/userdata`. An earlier build using the official bundle ID cannot update
+in place to this identity. Install the separate fork once.
 
-- **Keychain.** Electron `safeStorage` protects the desktop connection catalog, saved environment secrets, and Clerk sign-in storage. The official
-  app’s existing Keychain item can prompt for access when the signer changes. If access is
-  denied, the fork may be unable to decrypt the existing catalog and the owner may need to
-  reconnect environments or sign in again. An authorization stored for the fork’s designated
-  requirement should carry across builds using the same certificate.
+- **Keychain.** Electron `safeStorage` protects desktop connection secrets and Clerk sign-in
+  storage. The fork sets its own Electron app name before it opens credentials, so it uses its
+  own Safe Storage item. Sign in and add environments once in the fork. An authorization stored
+  for the fork's designated requirement should carry across builds using the same certificate.
   [Apple code-signing requirements](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements/)
 - **Privacy permissions.** macOS checks the app’s designated requirement for permissions such
-  as microphone access. Expect some permissions to need approval again on the switch from
-  upstream, potentially including files and folders, Automation, screen recording, camera and
+  as microphone access. The fork may request its own grants for
+  files and folders, Automation, screen recording, camera and
   microphone, depending on what the owner uses. Terminals and coding agents can inherit the
   app’s TCC identity. A stable requirement should preserve approvals on later fork updates,
   subject to normal macOS policy and per-permission prompts.
   [Apple code-signing requirements](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements/)
 - **Gatekeeper.** The installer removes quarantine from the verified replacement. That avoids
   the normal quarantined-download first-open path. The certificate does not supply Apple
-  notarization, and managed policies or explicit assessments can still reject it. First launch
-  and any prompts remain untested on this Mac.
+  notarization, and managed policies or explicit assessments can still reject it.
   [Apple Platform Security](https://support.apple.com/guide/security/gatekeeper-and-runtime-protection-sec5599b66df/web)
 
 ## Update verification
@@ -57,28 +58,20 @@ reads the installed bundle's designated requirement and validates the replacemen
 including nested code and every architecture. `verify-mac-update-signature.sh` mirrors that
 check with `codesign`. [Squirrel.Mac signature verification](https://github.com/Squirrel/Squirrel.Mac/blob/fffea30e4a339a7f7d69a3391314b72548d209bd/Squirrel/SQRLCodeSignature.m#L95)
 
-Two arm64 releases, `0.1.12-nightly.20261121.9001` and `0.1.12-nightly.20261121.9002`,
-produced DMGs, ZIPs, blockmaps and `nightly-mac.yml` on macOS 26.2. Both ZIPs passed
-`codesign --verify --deep --strict --verbose=2` after extraction and had this requirement:
+The release bundle should have this designated requirement:
 
 ```text
-designated => identifier "com.t3tools.t3code" and certificate leaf = H"76e49d5c12c3cf20ed471dbbc1752a8a19371579"
+designated => identifier "com.t3tools.t3code.fork" and certificate leaf = H"8aaf3b790302eebce7a8931ec62a51e3462798ea"
 ```
 
-The 9002 code directory hash was identical before archiving and after extraction. The
-`codesign -R` check accepted 9001 → 9002 and rejected a valid ad-hoc-signed copy. A scratch
-probe calling the same Security.framework functions as Squirrel.Mac returned `0` for the
-signed update and `-67050` for the ad-hoc copy. Both builds restored the keychain search list.
-The installer dry run validated the 9002 release metadata, SHA-512 and signature against
-a 9001 scratch target. The retained test release uses a separate certificate. To verify that
-release in a dry run, use `--test-signer-sha 76e49d5c12c3cf20ed471dbbc1752a8a19371579`
-and set `FORK_MAC_RELEASE_DIR` to the local test release directory.
+The earlier test releases `0.1.12-nightly.20261121.9001` and `0.1.12-nightly.20261121.9002`
+proved that Squirrel.Mac accepts successive signatures from one self-signed certificate and
+rejects an ad-hoc replacement. Those releases used the previous app ID. Use two builds with
+the new ID to verify the separate fork with `verify-mac-update-signature.sh`. For a test-signed
+local release, use `--dry-run --test-signer-sha <test certificate SHA-1>` and set
+`FORK_MAC_RELEASE_DIR` to its artifacts directory.
 
-The in-app test requires a separate macOS user session or VM. The installed and scratch builds
-share a bundle ID and ShipIt derives its launchd service and update-state location from that
-ID. Separate ports and a different `T3CODE_HOME` do not isolate that service.
+Use a separate macOS user session or VM for in-app update tests. ShipIt derives its launchd
+service and update-state location from the bundle ID. Scratch builds with the fork's bundle
+ID share that service with any fork already installed in the same user session.
 [ShipIt launchd job](https://github.com/Squirrel/Squirrel.Mac/blob/fffea30e4a339a7f7d69a3391314b72548d209bd/Squirrel/SQRLShipItLauncher.m#L25)
-
-A fallback would belong in the desktop `ElectronUpdater` adapter, which receives electron-updater’s
-downloaded ZIP and hands off to native `quitAndInstall`. The UI state machine can keep its
-existing download and restart states.

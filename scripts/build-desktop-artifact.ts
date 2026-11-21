@@ -32,6 +32,8 @@ import {
 import { applyWebBrandAssets } from "./apply-web-brand-assets.ts";
 // fork(board): Electron-builder loads the fork signing hook by filename.
 import { forkMacSigningBuildConfig } from "./fork/build-desktop.ts";
+// fork(board)
+import forkDesktop from "./fork/desktop-identity.json" with { type: "json" };
 import {
   BRAND_ASSET_PATHS,
   resolveWebAssetBrandForChannel,
@@ -1652,6 +1654,7 @@ const AzureTrustedSigningOptionsConfig = Config.all({
 
 // fork(board): Self-signed builds have no Apple provisioning profile.
 const ForkMacSigning = Config.Boolean("T3CODE_FORK_MAC_SIGNING").pipe(Config.withDefault(false));
+const ForkDesktopBuild = Config.Boolean("T3CODE_FORK_DESKTOP").pipe(Config.withDefault(false)); // fork(board)
 
 const BuildEnvConfig = Config.all({
   platform: Config.schema(BuildPlatform, "T3CODE_DESKTOP_PLATFORM").pipe(Config.option),
@@ -2802,7 +2805,8 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
   return `${trimmed.slice(0, versionSeparator)}/${trimmed.slice(versionSeparator + 1)}`;
 }
 
-export function resolveDesktopProductName(version: string): string {
+export function resolveDesktopProductName(version: string, isFork = false): string {
+  if (isFork) return forkDesktop.productName; // fork(board)
   return resolveDesktopUpdateChannel(version) === "nightly"
     ? "T3 Code (Nightly)"
     : (desktopPackageJson.productName ?? "T3 Code");
@@ -2824,10 +2828,17 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
 ) {
+  // fork(board): The staged package identifies the fork before Electron opens its profile.
+  const isFork = yield* ForkDesktopBuild;
+  const productName = resolveDesktopProductName(version, isFork);
+  const appProtocol = isFork
+    ? { name: productName, schemes: [forkDesktop.scheme] }
+    : { name: "T3 Code", schemes: ["t3code", "t3code-dev"] };
   const buildConfig: Record<string, unknown> = {
     afterPack: (yield* Path.Path).join(yield* RepoRoot, "scripts/prepare-server-compile-cache.cjs"),
-    appId: DESKTOP_APP_ID,
-    productName: resolveDesktopProductName(version),
+    appId: isFork ? forkDesktop.appId : DESKTOP_APP_ID, // fork(board)
+    productName,
+    ...(isFork ? { extraMetadata: { productName } } : {}), // fork(board)
     artifactName: "T3-Code-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     // runAsNode stays on: the app starts its server, helpers and the `t3` shim by running this
@@ -2920,10 +2931,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         ],
       },
       protocols: [
-        {
-          name: "T3 Code",
-          schemes: ["t3code", "t3code-dev"],
-        },
+        appProtocol, // fork(board)
         {
           name: "Web site URL",
           schemes: ["http", "https"],
@@ -2948,7 +2956,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "mac" && target === "dmg") {
     buildConfig.dmg = {
       // Finder caches DMG backgrounds by volume name; give each installer its own.
-      title: `${resolveDesktopProductName(version)} ${version} Installer`,
+      title: `${productName} ${version} Installer`, // fork(board)
       background: `dmg/dmg-background-${updateChannel}.png`,
       window: {
         width: 640,
@@ -3021,6 +3029,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   }
 
   if (platform === "win") {
+    if (isFork) buildConfig.protocols = [appProtocol]; // fork(board)
     buildConfig.npmRebuild = false;
     buildConfig.nsis = {
       differentialPackage: true,
@@ -3977,8 +3986,9 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     options.platform === "win"
       ? path.join(stageAppDir, WINDOWS_SERVER_RESOURCE_SOURCE_DIR, WINDOWS_SERVER_ASAR_RESOURCE)
       : undefined;
+  const isFork = yield* ForkDesktopBuild; // fork(board)
   const stagePackageJson: StagePackageJson = {
-    name: "t3code",
+    name: isFork ? forkDesktop.packageName : "t3code", // fork(board): Isolate updater cache and installer paths.
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
@@ -4168,7 +4178,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   if (options.platform === "win") {
     yield* validateWindowsPackagedPayload({
       stageDistDir,
-      appExecutableName: `${resolveDesktopProductName(appVersion)}.exe`,
+      appExecutableName: `${resolveDesktopProductName(appVersion, isFork)}.exe`, // fork(board)
       targetArch: options.arch,
       appVersion,
       expectWslRuntime: bundlesWslRuntime({

@@ -81,6 +81,8 @@ import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
+// fork(board): The packager embeds the fork identity in the app manifest.
+import { isForkDesktopPackage } from "./fork/identity.ts";
 
 if (process.argv.includes("--version")) {
   try {
@@ -90,6 +92,9 @@ if (process.argv.includes("--version")) {
   }
   Electron.app.exit(0);
 }
+
+// fork(board): Capture the packaged name before Electron's runtime name is set.
+const isFork = isForkDesktopPackage(Electron.app.isPackaged, Electron.app.getName());
 
 const layerDesktopEnvironment = Layer.unwrap(
   Effect.gen(function* () {
@@ -104,6 +109,7 @@ const layerDesktopEnvironment = Layer.unwrap(
       platform,
       processArch,
       ...metadata,
+      isFork, // fork(board)
     });
   }),
 );

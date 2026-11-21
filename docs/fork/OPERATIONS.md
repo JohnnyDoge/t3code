@@ -90,7 +90,52 @@ updates `update-feed/nightly.json` to point to the newest fork release. A run th
 also refreshes the pointer. Keep the `update-feed` release public. The workflow keeps the newest
 eight fork prereleases and their tags.
 
-Install the first fork build from the [release repository's Releases page](https://github.com/JohnnyDoge/t3code-fork-releases/releases). Run the
-[macOS installer](MAC_SIGNING.md) on macOS or download the Windows x64 NSIS installer. Later builds
-appear through the app's updater. It compares the pointer with GitHub's Atom feed and selects the
-newer nightly. macOS updates use the ZIP and Windows updates use the EXE.
+## Install and first run
+
+Install **T3 Code Fork (Nightly)** alongside the official app. Run the
+[macOS installer](MAC_SIGNING.md) or run the Windows x64 installer from the
+[release repository](https://github.com/JohnnyDoge/t3code-fork-releases/releases).
+On Windows, use the fork installer's default location and open the **T3 Code Fork
+(Nightly)** shortcut. On macOS, open **T3 Code Fork (Nightly)** from Applications.
+Use the fork's built-in updater for subsequent fork releases.
+
+The fork starts with an empty local environment. Its database, logs, settings, and
+saved environment credentials live under `~/.t3-fork/userdata` (on Windows,
+`%USERPROFILE%\.t3-fork\userdata`). Electron uses
+`~/Library/Application Support/t3code-fork` on macOS and `%APPDATA%\t3code-fork`
+on Windows. The fork leaves the shared `t3` command alone. To run the fork's
+bundled CLI, use `~/.t3-fork/bin/t3` or `%USERPROFILE%\.t3-fork\bin\t3.cmd`.
+
+## Open official threads in the fork
+
+Keep the official app open on each machine whose threads you want to work with.
+To connect both apps on the same machine:
+
+1. In the **official** app, open **Settings → Sharing & access → Authorized
+   clients** and select **Create pairing link**. Use the standard client permissions
+   so the fork can read threads and update their board tags.
+2. If the new link offers **Share**, choose **This machine** and copy its
+   `http://127.0.0.1:<port>` pairing URL. In local-only mode the official app
+   shows **Copy code** instead. Copy the code and read the `origin` field in the
+   official app's `~/.t3/userdata/server-runtime.json` (on Windows,
+   `%USERPROFILE%\.t3\userdata\server-runtime.json`) for the host and port.
+   Leave the official app running.
+3. In the **fork**, open **Settings → Environments → Add environment** and
+   paste the URL, or enter the origin and code in the pairing form. Label the environment so you can
+   distinguish it from the fork's **Local environment**. Once it connects, open the
+   task board to see threads from it and your other connected environments.
+
+If the official app offers no usable loopback link, enable **Network access** in
+its **Sharing & access** settings, wait for its backend to restart, then create a
+fresh link and select the official server's LAN address. Leave network access
+enabled while using a LAN link. This restart can interrupt active turns, so wait
+until the official environment is idle. Machine policy can restrict pairing.
+
+For environments already linked through T3 Connect, sign in within the fork and
+connect to the listed official machines from **Settings → Environments**. This
+uses the same account with a separate fork sign-in. Hosted links that open
+`t3code://` go to the official app. Paste the full HTTP pairing URL in the fork
+when adding an environment there.
+
+The apps keep separate settings. If you enable Tailscale HTTPS in both apps on
+one machine, choose a different Serve port for each.

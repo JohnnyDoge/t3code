@@ -165,9 +165,10 @@ async function main() {
       arch: { type: "string" },
       version: { type: "string" },
       out: { type: "string" },
+      unsigned: { type: "boolean" },
     },
   });
-  const { platform, arch, version, out } = values;
+  const { platform, arch, version, out, unsigned } = values;
   const mac = platform === "mac" && (arch === "arm64" || arch === "x64");
   if (
     (!mac && !(platform === "win" && arch === "x64")) ||
@@ -176,7 +177,7 @@ async function main() {
     !out
   ) {
     throw new Error(
-      "Usage: build-desktop.ts --platform <mac|win> --arch <arm64|x64> --version <nightly-version> --out <dir>",
+      "Usage: build-desktop.ts --platform <mac|win> --arch <arm64|x64> --version <nightly-version> --out <dir> [--unsigned]",
     );
   }
   const repository =
@@ -187,15 +188,17 @@ async function main() {
   if (mac) {
     // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone build wrapper runs before Effect starts.
     if (process.platform !== "darwin")
-      throw new Error("macOS signing requires a macOS build host.");
+      throw new Error("macOS packaging requires a macOS build host.");
   }
-  const credentials = mac ? signingCredentials() : undefined;
+  const signed = mac && !unsigned;
+  const credentials = signed ? signingCredentials() : undefined;
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     T3CODE_DESKTOP_UPDATE_REPOSITORY: repository,
-    T3CODE_DESKTOP_SIGNED: String(mac),
-    T3CODE_FORK_MAC_SIGNING: String(mac),
+    T3CODE_FORK_DESKTOP: "true",
+    T3CODE_DESKTOP_SIGNED: String(signed),
+    T3CODE_FORK_MAC_SIGNING: String(signed),
     CSC_IDENTITY_AUTO_DISCOVERY: "false",
   };
   delete env.CSC_LINK;
