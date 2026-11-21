@@ -6,7 +6,7 @@ import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useAtomValue } from "@effect/atom-react";
 // fork(board): sidebar header entry point.
-import { BoardHeaderButton } from "../../fork/board/BoardHeaderButton";
+import { BoardHeaderButton, BoardHeaderButtonProbe } from "../../fork/board/BoardHeaderButton";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { shortcutLabelForCommand } from "../../keybindings";
 import {
@@ -125,7 +125,7 @@ export function SidebarBrandWidthProbe({
         {isElectron ? <div className="w-[calc(2*var(--workspace-titlebar-control-size))]" /> : null}
       </div>
       {/* fork(board): reserve the header gap and button at the minimum sidebar width. */}
-      <div className="ml-2 w-7 shrink-0" />
+      <BoardHeaderButtonProbe />
     </div>
   );
 }

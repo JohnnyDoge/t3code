@@ -1,6 +1,8 @@
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { ContextMenuItem, ScopedThreadRef } from "@t3tools/contracts";
+import { msg } from "gt-react";
 
+import { m } from "../../i18n/messages";
 import { readThreadShell } from "../../state/entities";
 import type { SidebarThreadSummary } from "../../types";
 import { useBoardTagsLookup, useRunBoardOps } from "./boardData";
@@ -46,17 +48,48 @@ export function useRunBoardMark() {
   };
 }
 
+type BoardMarkAction = "fork-mark-seen" | "fork-mark-unseen";
+
+export function buildBoardMarkMenuItems(
+  canMarkSeen: boolean,
+  canMarkUnseen: boolean,
+): ReadonlyArray<ContextMenuItem<BoardMarkAction>> {
+  const items: ContextMenuItem<BoardMarkAction>[] = [];
+  if (canMarkSeen) {
+    items.push({ id: "fork-mark-seen", label: m(msg("Mark as seen")), icon: "circle-check" });
+  }
+  if (canMarkUnseen) {
+    items.push({ id: "fork-mark-unseen", label: m(msg("Mark as unseen")), icon: "refresh-cw" });
+  }
+  return items;
+}
+
 export function useBoardMenu() {
   const tagsOf = useBoardTagsLookup();
   const runBoardMark = useRunBoardMark();
 
-  function boardMenuState(thread: SidebarThreadSummary, now: Date) {
+  function itemState(thread: SidebarThreadSummary, now: Date) {
     const tags = tagsOf(thread);
     return {
-      canMarkSeen: canMarkSeen(thread, tags, now.toISOString()),
-      canMarkUnseen: canMarkUnseen(thread, tags),
+      extraItemsAfterMarkUnread: buildBoardMarkMenuItems(
+        canMarkSeen(thread, tags, now.toISOString()),
+        canMarkUnseen(thread, tags),
+      ),
     };
   }
 
-  return { boardMenuState, runBoardMark };
+  async function runAction(
+    action: string,
+    threadRef: ScopedThreadRef,
+    thread: SidebarThreadSummary,
+  ) {
+    switch (action) {
+      case "fork-mark-seen":
+        return runBoardMark(threadRef, thread, "seen");
+      case "fork-mark-unseen":
+        return runBoardMark(threadRef, thread, "unseen");
+    }
+  }
+
+  return { itemState, runAction };
 }

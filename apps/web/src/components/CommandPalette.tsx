@@ -72,7 +72,6 @@ import {
   FolderGit2Icon,
   FolderIcon,
   FolderPlusIcon,
-  KanbanIcon, // fork(board)
   MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
@@ -106,8 +105,7 @@ import { useAtomValue } from "@effect/atom-react";
 
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
-// fork(board): task board palette entry.
-import { BOARD_PATH } from "../fork/board/BoardHeaderButton";
+import { appendBoardPaletteAction } from "../fork/board/paletteAction"; // fork(board)
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { copyThreadReference } from "../lib/copyThreadReference";
@@ -1815,20 +1813,7 @@ function OpenCommandPaletteDialog(props: {
       await navigate({ to: "/usage" });
     },
   });
-
-  // fork(board): navigation entry alongside the other utility actions.
-  if (pathname !== BOARD_PATH) {
-    actionItems.push({
-      kind: "action",
-      value: "action:board",
-      searchTerms: ["board", "kanban", "tasks", "status", "overview"],
-      title: gt("Open task board"),
-      icon: <KanbanIcon className={ITEM_ICON_CLASS} />,
-      run: async () => {
-        await navigate({ href: BOARD_PATH });
-      },
-    });
-  }
+  appendBoardPaletteAction(actionItems, pathname, messages, navigate); // fork(board)
 
   for (const direction of [1, -1] as const) {
     const title =

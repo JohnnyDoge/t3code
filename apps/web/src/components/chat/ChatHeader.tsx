@@ -47,7 +47,6 @@ import { GuestShareIndicator } from "./GuestShareControls";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 // fork(board): chat header action for the current run.
 import { BoardSeenButton } from "../../fork/board/BoardSeenButton";
-import { useBoardMenu } from "../../fork/board/boardMenu";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -203,9 +202,7 @@ export const ChatHeader = memo(function ChatHeader({
       }
     });
   };
-  const boardMenu = useBoardMenu(); // fork(board)
   const { openMenu, closeMenu } = useThreadActionMenu({
-    boardMenu, // fork(board)
     threadRef: isServerThread ? activeThreadRef : null,
     projectCwd: activeProjectCwd,
     onStartRename: startRename,

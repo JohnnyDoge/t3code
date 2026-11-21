@@ -36,6 +36,13 @@ function recordEffect(action: string) {
 }
 
 vi.mock("../components/CustomSnoozeDialog", () => ({ requestCustomSnooze: vi.fn() }));
+// fork(board): isolate the upstream permission tests from the board's React hooks.
+vi.mock(import("../fork/board/boardMenu"), () => ({
+  useBoardMenu: () => ({
+    itemState: () => ({ extraItemsAfterMarkUnread: [] }),
+    runAction: vi.fn(),
+  }),
+}));
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
   useMemo: (factory: () => unknown) => factory(),

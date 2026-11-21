@@ -136,13 +136,12 @@ import { useProjectPin } from "../hooks/useProjectGroupUpdate";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
-// fork(board): share the mounted Sidebar's thread menu.
+// fork(board): share the Sidebar menu with board cards.
 import {
-  registerThreadContextMenu,
-  type ThreadContextMenuOptions,
-} from "../fork/board/threadContextMenu";
-// fork(board): board marks in the shared single-thread menu.
-import { useBoardMenu } from "../fork/board/boardMenu";
+  useBoardThreadMenu,
+  useRegisterBoardThreadMenu,
+  type BoardMenuOptions,
+} from "../fork/board/sidebarMenu";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
@@ -2710,24 +2709,33 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     },
   );
 
-  // fork(board): board marks share eligibility and execution with the chat menu.
-  const { boardMenuState, runBoardMark } = useBoardMenu();
+  const boardMenu = useBoardThreadMenu(threadByKeyRef); // fork(board)
   const handleThreadContextMenu = useStableCallback(
     (
       threadRef: ScopedThreadRef,
       position: { x: number; y: number },
       source: ContextMenuSource,
-      // fork(board): other surfaces can supply their own rename UI.
-      options?: ThreadContextMenuOptions,
+      fromSearch = false,
+      board?: BoardMenuOptions, // fork(board): board cards supply an inline rename editor.
     ) => {
       void (async () => {
         const api = readLocalApi();
         if (!api) return;
         const threadKey = scopedThreadKey(threadRef);
-        // fork(board): board cards can be outside the Sidebar's current project scope.
-        const row = threadByKeyRef.current.get(threadKey);
+        const selectionState = useThreadSelectionStore.getState();
+        // Search results are not selectable rows, so they always act on their own thread.
+        if (
+          !fromSearch &&
+          selectionState.hasSelection() &&
+          selectionState.selectedThreadKeys.has(threadKey)
+        ) {
+          await handleMultiSelectContextMenu(position, source);
+          return;
+        }
+        // Search results also reach threads in collapsed shelves, which are not rendered rows.
         const thread =
-          row ??
+          threadByKeyRef.current.get(threadKey) ??
+          // fork(board): board cards can be outside the Sidebar's current project scope.
           searchableThreads.find((candidate) => threadShellKey(candidate) === threadKey) ??
           readThreadShell(threadRef);
         if (!thread) return;
@@ -2740,13 +2748,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           serverConfigs.get(thread.environmentId)?.environment.capabilities
             .threadAutoSettleOptOut === true;
         const isRegeneratingTitle = thread.titleRegeneration != null;
-        // fork(board): off-list threads have no projected Sidebar section.
-        const isSnoozed = row
-          ? snoozedThreadKeysRef.current.has(threadKey)
-          : configLoaded && effectiveSnoozed(thread, { now: new Date().toISOString() });
-        const isSettled = row
-          ? settledThreadKeysRef.current.has(threadKey)
-          : configLoaded && !isSnoozed && thread.settledOverride === "settled";
+        const isSettled = settledThreadKeysRef.current.has(threadKey);
+        const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
         const isPinned = thread.pinnedAt != null;
         const snoozePresets = resolveSnoozePresets(
           new Date(),
@@ -2764,7 +2767,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
-              board: boardMenuState(thread, new Date()), // fork(board)
               canOperate: readEnvironmentScope(
                 threadRef.environmentId,
                 AuthOrchestrationOperateScope,
@@ -2791,8 +2793,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
-              // fork(board): only offer Rename if the caller can open an editor.
-              canRename: options?.onStartRename !== undefined,
+              canRename: !fromSearch,
+              ...boardMenu.itemState(thread, threadKey, configLoaded, board), // fork(board)
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2918,8 +2920,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             return;
           }
           case "rename":
-            // fork(board): open the caller's rename editor.
-            options?.onStartRename?.(threadRef, thread.title);
+            // fork(board): board cards use their own editor, and Search has none.
+            if (board || fromSearch) return board?.onStartRename?.(threadRef, thread.title);
+            startThreadRename(threadRef, thread.title);
             return;
           case "share-guest":
             openGuestShareDialog(threadRef);
@@ -2938,11 +2941,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           case "mark-unread":
             markThreadUnread(threadRef);
             return;
-          // fork(board): write the run-scoped board mark.
-          case "fork-mark-seen":
-            return await runBoardMark(threadRef, thread, "seen");
-          case "fork-mark-unseen":
-            return await runBoardMark(threadRef, thread, "unseen");
           case "copy-path":
             if (!threadWorkspacePath) {
               toastManager.add(
@@ -3025,28 +3023,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             return;
           }
           default:
+            await boardMenu.runAction(clicked.value, threadRef, thread); // fork(board)
             return;
         }
       })();
     },
   );
-  // fork(board): sidebar rows alone can act on the Sidebar selection.
-  const handleSidebarRowContextMenu = useStableCallback(
-    (threadRef: ScopedThreadRef, position: { x: number; y: number }, source: ContextMenuSource) => {
-      const selectionState = useThreadSelectionStore.getState();
-      if (
-        selectionState.hasSelection() &&
-        selectionState.selectedThreadKeys.has(scopedThreadKey(threadRef))
-      ) {
-        void handleMultiSelectContextMenu(position, source);
-        return;
-      }
-      handleThreadContextMenu(threadRef, position, source, { onStartRename: startThreadRename });
-    },
+  useRegisterBoardThreadMenu(handleThreadContextMenu); // fork(board)
+  const handleSearchResultContextMenu = useStableCallback(
+    (threadRef: ScopedThreadRef, position: { x: number; y: number }, source: ContextMenuSource) =>
+      handleThreadContextMenu(threadRef, position, source, true),
   );
-  // fork(board): publish the single-thread handler while this Sidebar is mounted.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the Sidebar's menu for other surfaces
-  useEffect(() => registerThreadContextMenu(handleThreadContextMenu), [handleThreadContextMenu]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to window keydown for thread navigation shortcuts using the current thread list
   useEffect(() => {
@@ -3465,9 +3452,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         searchMatchQuery={threadSearch.query}
                         onHighlight={() => setActiveSearchResultIndex(index)}
                         onSelect={() => selectThreadSearchResult(thread)}
-                        onContextMenu={
-                          handleThreadContextMenu /* fork(board): search acts on its own thread. */
-                        }
+                        onContextMenu={handleSearchResultContextMenu}
                         onFileDropThreads={handleThreadFileDrop}
                       />
                     );
@@ -3663,9 +3648,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           onCancelRename={cancelThreadRename}
                           isRenaming={renamingThreadKey === threadKey}
                           renamingTitle={renamingThreadKey === threadKey ? renamingTitle : ""}
-                          onContextMenu={
-                            handleSidebarRowContextMenu /* fork(board): rows honor the Sidebar selection. */
-                          }
+                          onContextMenu={handleThreadContextMenu}
                           onSettle={attemptSettle}
                           onActionSweepStart={startActionSweep}
                           onUnsettle={attemptUnsettle}

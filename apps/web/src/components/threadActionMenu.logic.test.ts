@@ -27,41 +27,17 @@ const baseState: ThreadActionMenuState = {
 };
 
 describe("buildThreadActionMenuItems", () => {
-  // fork(board): preserve the upstream menu and permission behavior without board state.
-  it.each([
-    { board: undefined, ids: [], canOperate: true },
-    {
-      board: { canMarkSeen: true, canMarkUnseen: false },
-      ids: ["fork-mark-seen"],
-      canOperate: true,
-    },
-    {
-      board: { canMarkSeen: false, canMarkUnseen: true },
-      ids: ["fork-mark-unseen"],
-      canOperate: true,
-    },
-    {
-      board: { canMarkSeen: true, canMarkUnseen: true },
-      ids: ["fork-mark-seen", "fork-mark-unseen"],
-      canOperate: false,
-    },
-  ])(
-    "inserts board actions after Mark unread when eligible ($ids)",
-    ({ board, ids, canOperate }) => {
-      const upstream = buildThreadActionMenuItems({ ...baseState, canOperate });
-      const items = buildThreadActionMenuItems({
-        ...baseState,
-        canOperate,
-        ...(board ? { board } : {}),
-      });
-      const expected = upstream
-        .map((item) => item.id)
-        .flatMap((id) => (id === "mark-unread" ? [id, ...ids] : [id]));
-      expect(items.map((item) => item.id)).toEqual(expected);
-      const boardItems = items.filter((item) => item.id.startsWith("fork-"));
-      expect(boardItems.map((item) => item.disabled === true)).toEqual(ids.map(() => !canOperate));
-    },
-  );
+  // fork(board): the extension slot follows Mark unread and uses the menu's permission filter.
+  it.each([true, false])("orders and gates injected actions (canOperate: %s)", (canOperate) => {
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      canOperate,
+      extraItemsAfterMarkUnread: [{ id: "fork-action", label: "Extension action" }],
+    });
+    const markUnreadIndex = items.findIndex((item) => item.id === "mark-unread");
+    expect(items[markUnreadIndex + 1]).toMatchObject({ id: "fork-action" });
+    expect(items[markUnreadIndex + 1]?.disabled === true).toBe(!canOperate);
+  });
 
   it.each([false, true])(
     "disables both lifecycle directions without permission (reversed: %s)",

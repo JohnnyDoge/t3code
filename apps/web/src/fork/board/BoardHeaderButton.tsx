@@ -10,6 +10,10 @@ import { cn } from "../../lib/utils";
 
 export const BOARD_PATH = "/board";
 
+export function BoardHeaderButtonProbe() {
+  return <div className="ml-2 w-7 shrink-0" />;
+}
+
 export function BoardHeaderButton({ onBackdrop }: { onBackdrop: boolean }) {
   const gt = useGT();
   const navigate = useNavigate();

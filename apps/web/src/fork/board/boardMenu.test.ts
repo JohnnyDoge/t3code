@@ -2,7 +2,7 @@ import { RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { makeThreadFixture } from "../../test-fixtures";
-import { planBoardMark } from "./boardMenu";
+import { buildBoardMarkMenuItems, planBoardMark } from "./boardMenu";
 import { seenTag } from "./boardModel";
 
 const runId = RunId.make("current");
@@ -21,6 +21,20 @@ const thread = makeThreadFixture({
     completedAt,
     assistantMessageId: null,
   },
+});
+
+describe("buildBoardMarkMenuItems", () => {
+  it.each([
+    { seen: false, unseen: false, ids: [] },
+    { seen: true, unseen: false, ids: ["fork-mark-seen"] },
+    { seen: false, unseen: true, ids: ["fork-mark-unseen"] },
+    { seen: true, unseen: true, ids: ["fork-mark-seen", "fork-mark-unseen"] },
+  ])(
+    "offers actions matching eligibility (seen: $seen, unseen: $unseen)",
+    ({ seen, unseen, ids }) => {
+      expect(buildBoardMarkMenuItems(seen, unseen).map((item) => item.id)).toEqual(ids);
+    },
+  );
 });
 
 describe("planBoardMark", () => {
