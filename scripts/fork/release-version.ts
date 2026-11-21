@@ -55,5 +55,5 @@ if (import.meta.main) {
       "Usage: release-version.ts <upstream-tag> <utc-date> <run-number> [previous-fork-tag]",
     );
   }
-  console.log(releaseVersion(upstreamTag, date, runNumber, previousForkTag));
+  process.stdout.write(`${releaseVersion(upstreamTag, date, runNumber, previousForkTag)}\n`);
 }
