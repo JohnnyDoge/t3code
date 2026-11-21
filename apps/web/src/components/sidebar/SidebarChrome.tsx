@@ -5,6 +5,8 @@ import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useAtomValue } from "@effect/atom-react";
+// fork(board): sidebar header entry point.
+import { BoardHeaderButton } from "../../fork/board/BoardHeaderButton";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { shortcutLabelForCommand } from "../../keybindings";
 import {
@@ -93,6 +95,8 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           </div>
         ) : null}
       </div>
+      {/* fork(board): the flex-1 brand group keeps the button at the right edge. */}
+      <BoardHeaderButton onBackdrop={backdropVariant !== null} />
     </div>
   );
 });
@@ -120,6 +124,8 @@ export function SidebarBrandWidthProbe({
         <SidebarBrandMark onBackdrop={false} />
         {isElectron ? <div className="w-[calc(2*var(--workspace-titlebar-control-size))]" /> : null}
       </div>
+      {/* fork(board): reserve the header gap and button at the minimum sidebar width. */}
+      <div className="ml-2 w-7 shrink-0" />
     </div>
   );
 }

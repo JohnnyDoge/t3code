@@ -141,6 +141,8 @@ import {
   registerThreadContextMenu,
   type ThreadContextMenuOptions,
 } from "../fork/board/threadContextMenu";
+// fork(board): board marks in the shared single-thread menu.
+import { useBoardMenu } from "../fork/board/boardMenu";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
@@ -2708,6 +2710,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     },
   );
 
+  // fork(board): board marks share eligibility and execution with the chat menu.
+  const { boardMenuState, runBoardMark } = useBoardMenu();
   const handleThreadContextMenu = useStableCallback(
     (
       threadRef: ScopedThreadRef,
@@ -2760,6 +2764,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
+              board: boardMenuState(thread, new Date()), // fork(board)
               canOperate: readEnvironmentScope(
                 threadRef.environmentId,
                 AuthOrchestrationOperateScope,
@@ -2933,6 +2938,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           case "mark-unread":
             markThreadUnread(threadRef);
             return;
+          // fork(board): write the run-scoped board mark.
+          case "fork-mark-seen":
+            return await runBoardMark(threadRef, thread, "seen");
+          case "fork-mark-unseen":
+            return await runBoardMark(threadRef, thread, "unseen");
           case "copy-path":
             if (!threadWorkspacePath) {
               toastManager.add(

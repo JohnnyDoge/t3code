@@ -28,6 +28,8 @@ import {
 } from "../components/threadActionMenu.logic";
 import { titleRegenerationToast } from "../components/threadTitleRegenerationToast";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
+// fork(board): board marks in the shared thread menu.
+import type { useBoardMenu } from "../fork/board/boardMenu";
 import { copyThreadReference } from "../lib/copyThreadReference";
 import { m } from "../i18n/messages";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
@@ -72,6 +74,7 @@ export function useThreadActionMenu(input: {
   readonly onStartRename?: (() => void) | undefined;
   readonly onFind?: ((threadRef: ScopedThreadRef) => void) | undefined;
   readonly canShareWithGuest: boolean;
+  readonly boardMenu?: ReturnType<typeof useBoardMenu>; // fork(board)
 }) {
   const { threadRef, projectCwd, onStartRename, onFind, canShareWithGuest } = input;
   const router = useRouter();
@@ -135,6 +138,7 @@ export function useThreadActionMenu(input: {
     const isRegeneratingTitle = thread.titleRegeneration != null;
     const snoozePresets = resolveSnoozePresets(now, timestampFormat, threadRef.environmentId);
     const items = buildThreadActionMenuItems({
+      ...(input.boardMenu ? { board: input.boardMenu.boardMenuState(thread, now) } : {}), // fork(board)
       canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
       canTriage: threadTriagePermitted(threadRef.environmentId),
       canFind: onFind !== undefined,
@@ -271,6 +275,11 @@ export function useThreadActionMenu(input: {
         case "mark-unread":
           markThreadUnread(threadRef);
           return;
+        // fork(board): write the run-scoped board mark.
+        case "fork-mark-seen":
+          return await input.boardMenu?.runBoardMark(threadRef, thread, "seen");
+        case "fork-mark-unseen":
+          return await input.boardMenu?.runBoardMark(threadRef, thread, "unseen");
         case "share-guest":
           openGuestShareDialog(threadRef);
           return;

@@ -43,7 +43,8 @@ export function startMainAppLocationTracking(router: AnyRouter): () => void {
     appModalReturnThreadTarget = resolveThreadRouteTarget(
       router.state.matches.at(-1)?.params ?? {},
     );
-    if (!isSidebarUtilityPage(pathname)) mainAppHref = href;
+    // fork(board): preserve the main-app location while the board is open.
+    if (!isSidebarUtilityPage(pathname) && pathname !== "/board") mainAppHref = href;
   };
   record();
   return router.subscribe("onResolved", record);

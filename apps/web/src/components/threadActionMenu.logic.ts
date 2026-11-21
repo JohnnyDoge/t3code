@@ -23,6 +23,9 @@ export type ThreadActionMenuId =
   | "rename"
   | "regenerate-title"
   | "mark-unread"
+  // fork(board): board marks require operate permission by default.
+  | "fork-mark-seen"
+  | "fork-mark-unseen"
   | "share-guest"
   | "copy"
   | "copy-path"
@@ -97,6 +100,8 @@ export interface ThreadActionMenuState {
   readonly canOperate: boolean;
   /** Settle, snooze and their undo stay available until the host denies the operate scope. */
   readonly canTriage?: boolean;
+  // fork(board): injected by callers that have board state.
+  readonly board?: { readonly canMarkSeen: boolean; readonly canMarkUnseen: boolean };
   readonly canFind?: boolean;
   /** False where no inline title editor is rendered, such as sidebar search results. */
   readonly canRename?: boolean;
@@ -245,6 +250,25 @@ export function buildThreadActionMenuItems(
       : []),
     ...(state.hasCompletedRun && !state.isRunning
       ? [{ id: "mark-unread" as const, label: resolve(msg("Mark unread")), icon: "mail-open" }]
+      : []),
+    // fork(board): board marks use the existing context-menu icon set.
+    ...(state.board?.canMarkSeen
+      ? [
+          {
+            id: "fork-mark-seen" as const,
+            label: resolve(msg("Mark as seen")),
+            icon: "circle-check",
+          },
+        ]
+      : []),
+    ...(state.board?.canMarkUnseen
+      ? [
+          {
+            id: "fork-mark-unseen" as const,
+            label: resolve(msg("Mark as unseen")),
+            icon: "refresh-cw",
+          },
+        ]
       : []),
     ...(state.canShareWithGuest
       ? [{ id: "share-guest" as const, label: resolve(msg("Share with guest")), icon: "user-plus" }]
