@@ -257,6 +257,9 @@ alone.
 
 ## 6. Seam registry (upstream files touched by the fork)
 
-| Upstream file          | Seam | Why |
-| ---------------------- | ---- | --- |
-| _(add a row per seam)_ |      |     |
+| Upstream file                                              | Seam                                                                                                                                                                 | Why                                                   |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `apps/web/src/components/Sidebar.tsx`                      | Thread menu handler takes `ThreadContextMenuOptions`, resolves off-list threads, rows route through a selection-aware wrapper, handler registered for other surfaces | Board cards open the same thread menu as sidebar rows |
+| `packages/client-runtime/src/operations/commands.ts`       | `setThreadTag` dispatching stock `thread.tag.set`                                                                                                                    | Write board tags                                      |
+| `packages/client-runtime/src/state/threadCommands.ts`      | `setTag` command with optimistic shell update                                                                                                                        | Cards move instantly                                  |
+| `packages/client-runtime/src/state/threadCommands.test.ts` | Cases for `setTag`                                                                                                                                                   | Covers the optimistic update                          |
