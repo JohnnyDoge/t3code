@@ -1,6 +1,6 @@
 # Daily fork sync
 
-Run in `/Users/dmitry/.t3/projects/t3-desktop` on the Mac mini. Load
+Run in `~/.t3/projects/t3-desktop` on the Mac mini. Load
 `~/.config/vite-plus/env` and run `bash scripts/fork/sync-upstream.sh`. Act on its last line.
 
 - **`up-to-date` or `pushed <tag>`**. Finish with one line giving the accepted tag from

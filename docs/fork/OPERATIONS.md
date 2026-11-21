@@ -21,7 +21,7 @@
    | `FORK_MAC_CERT_P12_BASE64` | Base64-encoded PKCS#12 export of the stable `T3 Code Fork Signing` identity and private key |
    | `FORK_MAC_CERT_PASSWORD`   | Password for the same PKCS#12 export                                                        |
 
-4. In the Mac mini checkout at `/Users/dmitry/.t3/projects/t3-desktop`, set `origin` to the code
+4. In the Mac mini checkout at `~/.t3/projects/t3-desktop`, set `origin` to the code
    fork and `upstream` to `pingdotgg/t3code`. Use the owner's normal Git credentials with
    permission to update the release repository's workflow and force-update the code fork's
    `main` with a lease. Push the fork's `main` without tags. If an earlier push copied upstream
@@ -44,7 +44,7 @@ the same common name has a different designated requirement. See [macOS signing]
 ## Daily sync
 
 Create a daily T3 scheduled task on the Mac mini. Select Codex and the project checkout at
-`/Users/dmitry/.t3/projects/t3-desktop`, use the project root as the working directory, and
+`~/.t3/projects/t3-desktop`, use the project root as the working directory, and
 paste [SYNC_AGENT.md](SYNC_AGENT.md) as its instructions. Choose a time when the checkout is usually
 idle. Run the task on demand in T3 to trigger an extra sync. The task's final message reports the
 accepted tag and any conflicts resolved, or the blocker and files involved.
