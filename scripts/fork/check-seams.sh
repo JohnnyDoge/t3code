@@ -20,17 +20,12 @@ expected=$(
 )
 
 upstream_paths=(. ':(exclude)apps/web/src/fork/**' ':(exclude)apps/desktop/src/fork/**'
-  ':(exclude)scripts/fork/**' ':(exclude).github/workflows/fork-*.yml'
+  ':(exclude)scripts/fork/**'
   ':(exclude)docs/fork/**' ":(exclude)$route_tree")
 marked=$(git grep -l -F "$marker" HEAD -- "${upstream_paths[@]}") || [[ $? == 1 ]]
 marked=$(printf '%s\n' "$marked" | sed 's/^HEAD://' | LC_ALL=C sort -u)
 
-changed=$(
-  git diff --no-renames --name-only --diff-filter=ACMRTUXB "$base_sha" HEAD -- "${upstream_paths[@]}"
-  git diff --no-renames --name-only --diff-filter=D "$base_sha" HEAD -- "${upstream_paths[@]}" \
-    ':(exclude,glob).github/workflows/*.yml' ':(exclude,glob).github/workflows/*.yaml'
-)
-changed=$(printf '%s\n' "$changed" | LC_ALL=C sort -u)
+changed=$(git diff --no-renames --name-only "$base_sha" HEAD -- "${upstream_paths[@]}" | LC_ALL=C sort -u)
 
 compare_registry() {
   if [[ $expected != "$2" ]]; then
@@ -40,13 +35,6 @@ compare_registry() {
 }
 compare_registry 'files with seam markers' "$marked"
 compare_registry 'upstream files changed by the fork' "$changed"
-
-workflows=$(git ls-files -- ':(glob).github/workflows/*.yml' ':(glob).github/workflows/*.yaml' \
-  ':(exclude,glob).github/workflows/fork-*.yml')
-if [[ -n $workflows ]]; then
-  printf 'Remove upstream workflow files before pushing:\n%s\n' "$workflows" >&2
-  exit 1
-fi
 
 tag_access="\\b([a-z]*thread[a-z]*|shell)([?.]+tags\\b|\\[[\"']tags[\"']\\])"
 tag_render='[.{,][[:space:]]*tags[[:space:]]*(\??\.(map|join)\(|\})|\bthreadTags\b'

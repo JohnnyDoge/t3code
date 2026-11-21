@@ -6,7 +6,7 @@ lock=
 # shellcheck disable=SC2329 # Invoked by the EXIT trap.
 finish() {
   if [[ -n $lock ]]; then
-    rm -f -- "$lock/conflicts" "$lock/workflows" "$lock/upstream-base.sh"
+    rm -f -- "$lock/conflicts" "$lock/upstream-base.sh"
     rmdir "$lock" || true
   fi
   printf '%s\n' "$report"
@@ -15,6 +15,7 @@ finish() {
     conflict\ *) exit 2 ;;
     check-failed\ *) exit 3 ;;
     push-rejected) exit 4 ;;
+    release-repo-failed\ *) exit 5 ;;
     *) exit 1 ;;
   esac
 }
@@ -99,8 +100,6 @@ continue_rebase() {
     git diff --name-only --diff-filter=U -z > "$lock/conflicts"
     while IFS= read -r -d '' path; do
       case "$path" in
-        .github/workflows/fork-*.yml) ;;
-        .github/workflows/*.yml|.github/workflows/*.yaml) git rm -f -- "$path" ;;
         "$route_tree"|apps/*/src/i18n/translations/*.json)
           git restore --source="$target_sha" --staged --worktree -- "$path"
           ;;
@@ -119,19 +118,10 @@ continue_rebase() {
 }
 
 prepare_candidate() {
-  report='error enforce upstream-owned file policies'
-  git ls-files -z -- ':(glob).github/workflows/*.yml' ':(glob).github/workflows/*.yaml' \
-    ':(exclude,glob).github/workflows/fork-*.yml' > "$lock/workflows"
-  while IFS= read -r -d '' path; do
-    git rm -- "$path"
-  done < "$lock/workflows"
-  translations=':(glob)apps/*/src/i18n/translations/*.json'
+  report='error restore upstream translations'
+  local translations=':(glob)apps/*/src/i18n/translations/*.json'
   if ! git diff --quiet "$target_sha" HEAD -- "$translations"; then
     git restore --source="$target_sha" --staged --worktree -- "$translations"
-  fi
-  # Candidate commits are checked together by run_checks before the push.
-  if ! git diff --cached --quiet; then
-    git -c core.hooksPath=/dev/null commit -m 'chore(fork): keep upstream workflows removed and translations upstream'
   fi
 
   report='check-failed generate-routes'
@@ -140,7 +130,7 @@ prepare_candidate() {
   git add -- "$base_file" "$route_tree"
   if ! git diff --cached --quiet; then
     report='error commit upstream base and regenerated route tree'
-    git -c core.hooksPath=/dev/null commit -m "chore(fork): sync upstream base to $target_tag"
+    git -c core.hooksPath=/dev/null commit -m "chore(fork): sync with upstream $target_tag"
   fi
 }
 
@@ -281,11 +271,16 @@ main() {
     return_to_main
     stop up-to-date
   fi
-  if ! git push --force-with-lease="refs/heads/main:$lease" origin HEAD:refs/heads/main; then
+  local release_repo_changes
+  release_repo_changes=$(git diff --name-only "$lease" HEAD -- scripts/fork/release-repo/)
+  if ! git push --no-follow-tags --force-with-lease="refs/heads/main:$lease" origin HEAD:refs/heads/main; then
     stop push-rejected
   fi
   git branch -f main HEAD
   return_to_main
+  if [[ -n $release_repo_changes ]] && ! bash scripts/fork/publish-release-repo.sh; then
+    stop "release-repo-failed $target_tag"
+  fi
   stop "pushed $target_tag"
 }
 

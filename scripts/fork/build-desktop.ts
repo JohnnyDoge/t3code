@@ -179,9 +179,10 @@ async function main() {
       "Usage: build-desktop.ts --platform <mac|win> --arch <arm64|x64> --version <nightly-version> --out <dir>",
     );
   }
-  const repository = process.env.T3CODE_DESKTOP_UPDATE_REPOSITORY?.trim();
-  if (!repository || !/^[\w.-]+\/[\w.-]+$/.test(repository)) {
-    throw new Error("Set T3CODE_DESKTOP_UPDATE_REPOSITORY to the fork's owner/repo.");
+  const repository =
+    process.env.T3CODE_DESKTOP_UPDATE_REPOSITORY?.trim() || "JohnnyDoge/t3code-fork-releases";
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) {
+    throw new Error("Set T3CODE_DESKTOP_UPDATE_REPOSITORY to the release repository's owner/repo.");
   }
   if (mac) {
     // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone build wrapper runs before Effect starts.

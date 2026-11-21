@@ -23,4 +23,22 @@ describe("fork release version", () => {
   it("refuses a date before the base nightly", () => {
     expect(() => releaseVersion(upstreamTag, "20261120", "1")).toThrow("Release date precedes");
   });
+
+  it("exceeds a newer official nightly from the same day", () => {
+    expect(
+      releaseVersion(
+        upstreamTag,
+        "20261121",
+        "2",
+        "v0.1.12-nightly.20261121.5040",
+        "v0.1.12-nightly.20261121.5042",
+      ),
+    ).toBe("0.1.12-nightly.20261121.5043");
+  });
+
+  it("requires a source sync once the official nightly advances to a newer base", () => {
+    expect(() =>
+      releaseVersion(upstreamTag, "20261122", "1", undefined, "v0.1.13-nightly.20261121.5042"),
+    ).toThrow("older than official nightly");
+  });
 });

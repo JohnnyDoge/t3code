@@ -8,7 +8,7 @@ fail() {
 }
 
 target='/Applications/T3 Code (Nightly).app'
-repo=${T3CODE_DESKTOP_UPDATE_REPOSITORY:-}
+repo=${T3CODE_DESKTOP_UPDATE_REPOSITORY:-JohnnyDoge/t3code-fork-releases}
 dry_run=false
 fork_cert_sha=8AAF3B790302EEBCE7A8931EC62A51E3462798EA
 signer_sha=$fork_cert_sha
@@ -66,16 +66,7 @@ if [[ -n "$local_release" ]]; then
   [[ "$local_release" = /* ]] || local_release="$PWD/$local_release"
   cp "$local_release/$metadata" "$work_dir/$metadata"
 else
-  if [[ -z "$repo" ]]; then
-    script_dir=$(cd "$(dirname "$0")" && pwd -P)
-    origin=$(git -C "$script_dir" remote get-url origin 2>/dev/null || true)
-    case "$origin" in
-      https://github.com/*) repo=${origin#https://github.com/} ;;
-      git@github.com:*) repo=${origin#git@github.com:} ;;
-    esac
-    repo=${repo%.git}
-  fi
-  [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail 'Set --repo to the public fork owner/repo.'
+  [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail 'Set --repo to the public release repository owner/repo.'
   fetch_public "https://github.com/$repo/releases/download/update-feed/nightly.json" \
     --output "$work_dir/nightly.json"
   tag=$(/usr/bin/ruby -rjson -e '

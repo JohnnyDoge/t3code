@@ -2,7 +2,8 @@
 
 Generate the release identity once with `scripts/fork/make-mac-signing-cert.sh <out-dir>`.
 Store `cert.p12.base64` and `password.txt` as `FORK_MAC_CERT_P12_BASE64` and
-`FORK_MAC_CERT_PASSWORD`. Keep a secure backup of the original identity. A new certificate
+`FORK_MAC_CERT_PASSWORD` in the `JohnnyDoge/t3code-fork-releases` Actions secrets.
+Keep a secure backup of the original identity. A new certificate
 with the same common name still changes the update requirement.
 
 The fork build uses electron-builder and the upstream nested signing hook. During signing it
@@ -16,9 +17,10 @@ Notarization and secure timestamps are disabled.
 
 ## First install
 
-Run `scripts/fork/install-mac.sh --repo <owner/repo> --dry-run` to validate the latest nightly
-prerelease. The repository defaults to `T3CODE_DESKTOP_UPDATE_REPOSITORY` or the checkout’s
-GitHub `origin`. Run it without `--dry-run` to install. The default target is
+Run `scripts/fork/install-mac.sh --dry-run` to validate the latest nightly prerelease.
+The script defaults to `JohnnyDoge/t3code-fork-releases`. Use `--repo <owner/repo>` or
+`T3CODE_DESKTOP_UPDATE_REPOSITORY` to select a different release repository.
+Run it without `--dry-run` to install. The default target is
 `/Applications/T3 Code (Nightly).app`. The script reads the release tag from
 `update-feed/nightly.json` and verifies the ZIP against `nightly-mac.yml`. Before clearing
 quarantine, it checks the unpacked bundle against the fork certificate's pinned leaf SHA-1

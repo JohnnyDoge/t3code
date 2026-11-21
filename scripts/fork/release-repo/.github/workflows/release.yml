@@ -28,18 +28,18 @@ defaults:
 
 jobs:
   plan:
-    if: github.repository != 'pingdotgg/t3code' && github.ref == 'refs/heads/main'
+    if: github.repository == 'JohnnyDoge/t3code-fork-releases' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
-      ref: ${{ steps.release.outputs.ref }}
+      source_sha: ${{ steps.release.outputs.source_sha }}
       version: ${{ steps.release.outputs.version }}
     steps:
-      - name: Checkout main
+      - name: Checkout fork main
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          repository: ${{ vars.FORK_REPOSITORY || 'JohnnyDoge/t3code' }}
           ref: refs/heads/main
-          fetch-depth: 0
           persist-credentials: false
           sparse-checkout: |
             /*
@@ -57,28 +57,34 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           FORCE: ${{ inputs.force }}
+          FORK_REPOSITORY: ${{ vars.FORK_REPOSITORY || 'JohnnyDoge/t3code' }}
         run: |
-          ref=$(git rev-parse HEAD)
+          source_sha=$(git rev-parse HEAD)
+          notes="Desktop build from https://github.com/$FORK_REPOSITORY/commit/$source_sha."
           previous_tags=$(gh release list --exclude-drafts --limit 100 --json tagName,name,isPrerelease \
             --jq "$FORK_RELEASE_TAGS_QUERY" | sort -Vr)
           previous_tag=${previous_tags%%$'\n'*}
           if [[ -n $previous_tag && $FORCE != true ]]; then
-            previous_ref=$(git rev-parse --verify "refs/tags/$previous_tag^{commit}")
-            if [[ $previous_ref == "$ref" ]]; then
-              echo "main is already released as $previous_tag."
+            previous_notes=$(gh release view "$previous_tag" --json body --jq .body)
+            if [[ $previous_notes == "$notes" ]]; then
+              echo "Fork main is already released as $previous_tag."
               exit 0
             fi
           fi
 
           upstream_tag=$(bash scripts/fork/upstream-base.sh)
+          official_tags=$(gh release list --repo pingdotgg/t3code --exclude-drafts --limit 100 \
+            --json tagName,isPrerelease --jq '.[] | select(.isPrerelease) | .tagName' |
+            grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[0-9]+$' | sort -Vr)
+          official_tag=${official_tags%%$'\n'*}
           version=$(node scripts/fork/release-version.ts "$upstream_tag" "$(date -u +%Y%m%d)" \
-            "$GITHUB_RUN_NUMBER" "$previous_tag")
-          printf 'ref=%s\nversion=%s\n' "$ref" "$version" >> "$GITHUB_OUTPUT"
+            "$GITHUB_RUN_NUMBER" "$previous_tag" "$official_tag")
+          printf 'source_sha=%s\nversion=%s\n' "$source_sha" "$version" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build ${{ matrix.platform }} ${{ matrix.arch }}
     needs: plan
-    if: github.repository != 'pingdotgg/t3code' && needs.plan.outputs.version != ''
+    if: needs.plan.outputs.version != ''
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -100,10 +106,11 @@ jobs:
         if: matrix.platform == 'win'
         run: git config --global core.longpaths true
 
-      - name: Checkout release commit
+      - name: Checkout fork source commit
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ needs.plan.outputs.ref }}
+          repository: ${{ vars.FORK_REPOSITORY || 'JohnnyDoge/t3code' }}
+          ref: ${{ needs.plan.outputs.source_sha }}
           persist-credentials: false
           sparse-checkout: |
             /*
@@ -136,7 +143,7 @@ jobs:
           RUST_TARGET: ${{ matrix.rust_target }}
         run: cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target "$RUST_TARGET"
 
-      - name: Build macOS desktop artifacts
+      - name: Build and sign macOS desktop artifacts
         if: matrix.platform == 'mac'
         shell: bash
         env:
@@ -168,16 +175,16 @@ jobs:
 
   publish:
     needs: [plan, build]
-    if: github.repository != 'pingdotgg/t3code'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: write
     steps:
-      - name: Checkout release commit
+      - name: Checkout fork release validator
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ needs.plan.outputs.ref }}
+          repository: ${{ vars.FORK_REPOSITORY || 'JohnnyDoge/t3code' }}
+          ref: ${{ needs.plan.outputs.source_sha }}
           persist-credentials: false
           sparse-checkout: scripts/fork
 
@@ -196,15 +203,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_REF: ${{ needs.plan.outputs.ref }}
+          RELEASE_REF: ${{ github.sha }}
+          FORK_REPOSITORY: ${{ vars.FORK_REPOSITORY || 'JohnnyDoge/t3code' }}
+          SOURCE_SHA: ${{ needs.plan.outputs.source_sha }}
           VERSION: ${{ needs.plan.outputs.version }}
         run: |
           tag="v$VERSION"
+          notes="Desktop build from https://github.com/$FORK_REPOSITORY/commit/$SOURCE_SHA."
           mapfile -t assets < validated-assets.txt
-          existing=$(gh release view "$tag" --json name,isDraft,targetCommitish \
-            --jq '[.name, (.isDraft | tostring), .targetCommitish] | @tsv' \
+          existing=$(gh release view "$tag" --json name,isDraft,targetCommitish,body \
+            --jq '[.name, (.isDraft | tostring), .targetCommitish, .body] | @tsv' \
             2>/dev/null) || existing=
-          tag_ref=$(git ls-remote --tags origin "refs/tags/$tag" "refs/tags/$tag^{}")
+          tag_ref=$(git ls-remote --tags "https://github.com/$GH_REPO.git" "refs/tags/$tag" "refs/tags/$tag^{}")
           if [[ -z $existing && -n $tag_ref ]]; then
             echo "::error::Release tag $tag already exists without a fork release."
             exit 1
@@ -216,9 +226,9 @@ jobs:
           case "$existing" in
             "")
               gh release create "$tag" --draft --prerelease --latest=false --target "$RELEASE_REF" \
-                --title "T3 Code Fork $tag" --notes "Desktop build from $RELEASE_REF." "${assets[@]}"
+                --title "T3 Code Fork $tag" --notes "$notes" "${assets[@]}"
               ;;
-            "T3 Code Fork $tag"$'\t'true$'\t'"$RELEASE_REF")
+            "T3 Code Fork $tag"$'\t'true$'\t'"$RELEASE_REF"$'\t'"$notes")
               gh release upload "$tag" --clobber "${assets[@]}"
               ;;
             *) echo "::error::Release $tag already exists." && exit 1 ;;
@@ -233,7 +243,7 @@ jobs:
 
   update-feed:
     needs: [plan, publish]
-    if: ${{ !cancelled() && github.repository != 'pingdotgg/t3code' && needs.plan.result == 'success' && (needs.publish.result == 'success' || needs.plan.outputs.version == '') }}
+    if: ${{ !cancelled() && needs.plan.result == 'success' && (needs.publish.result == 'success' || needs.plan.outputs.version == '') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -243,6 +253,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          RELEASE_REF: ${{ github.sha }}
         run: |
           published=$(gh release list --exclude-drafts --limit 100 --json tagName,name,isPrerelease \
             --jq "$FORK_RELEASE_TAGS_QUERY" | sort -Vru)
@@ -259,7 +270,7 @@ jobs:
 
           gh release view "$tag" --json tagName,name,body --jq '{tag_name: .tagName, name, body}' > nightly.json
           gh release view update-feed > /dev/null 2>&1 ||
-            gh release create update-feed --draft --prerelease --latest=false --title "Update feed" \
+            gh release create update-feed --draft --prerelease --latest=false --target "$RELEASE_REF" --title "Update feed" \
               --notes "The desktop updater uses this release to find the newest fork nightly."
           gh release upload update-feed nightly.json --clobber
           gh release edit update-feed --draft=false --prerelease --latest=false

@@ -25,7 +25,6 @@ noted, not its code wholesale.
    - `apps/web/src/fork/**` for web UI and logic
    - `apps/desktop/src/fork/**` for desktop shell code
    - `scripts/fork/**` for scripts
-   - `.github/workflows/fork-*.yml` for CI
    - `docs/fork/**` for documentation
 3. **Upstream files get only seams**: the smallest possible insertion that hands control
    to fork-owned code (one import plus one call, one menu entry, one button). Do not
@@ -227,14 +226,17 @@ alone.
 
 ## 4. Build and release pipeline
 
-- The fork's GitHub repository is public, so the desktop auto-updater can read
-  releases without a token.
+- **Code and release repositories**: `JohnnyDoge/t3code` holds the fork's code and
+  upstream workflows. GitHub Actions is disabled there. The public
+  `JohnnyDoge/t3code-fork-releases` holds the release workflow, signing secrets,
+  releases and update feed. The fork versions the release repository's files under
+  `scripts/fork/release-repo/`.
 - `scripts/build-desktop-artifact.ts` points the auto-update feed at
-  `T3CODE_DESKTOP_UPDATE_REPOSITORY`, or failing that `GITHUB_REPOSITORY`, so builds
-  made in the fork's CI update from the fork's releases.
+  `T3CODE_DESKTOP_UPDATE_REPOSITORY`. The fork build wrapper defaults it to
+  `JohnnyDoge/t3code-fork-releases`.
 - Version format: `<upstream base>-nightly.<YYYYMMDD>.<N>`, because
   `/-nightly\.\d{8}\.\d+$/` selects the nightly channel. Versions must increase on every
-  release.
+  release and exceed the newest official nightly at planning time.
 - **History is linear**: `main` is the upstream nightly tag plus the fork's own non-merge
   commits. Never merge into `main`; integrate branches by rebasing them onto `main` and
   fast-forwarding.
@@ -242,26 +244,26 @@ alone.
   `scripts/fork/sync-upstream.sh` on the owner's Mac mini. A clean rebase that passes the
   checks is pushed with the owner's local git credentials. On a conflict or a failing
   check, the agent resolves it by following `docs/fork/SYNC_AGENT.md`, reruns the checks,
-  and pushes; if it cannot, it pushes nothing and leaves a clear report. GitHub holds no
-  push token.
-- **Upstream workflows are removed from the fork** by one fork commit. Upstream edits to
-  those files (modify/delete conflicts) and new upstream workflows are resolved by
-  deleting them during sync, so nothing upstream ever runs in the fork's Actions.
-- **Weekly** CI job (`fork-release`), plus a manual trigger: build macOS arm64
-  (dmg + zip) and Windows x64 (nsis), then publish a GitHub prerelease with the
-  electron-builder update metadata. After the validated assets are public, GitHub Actions
-  updates `update-feed/nightly.json` so the newest fork nightly is discoverable.
+  and pushes; if it cannot, it pushes nothing and leaves a clear report. When the push
+  changes the release repository's files, the sync publishes them with
+  `scripts/fork/publish-release-repo.sh` and the same local Git credentials.
+- **Weekly** release workflow, plus a manual trigger: check out the fork's `main`
+  to build macOS arm64 (dmg + zip) and Windows x64 (nsis). The Git tag targets the
+  release repository's default branch, and the release notes record the fork commit.
+  The workflow publishes a GitHub prerelease with the electron-builder update metadata.
+  After the validated assets are public, GitHub Actions updates `update-feed/nightly.json`
+  so the newest fork nightly is discoverable.
 - macOS: no Apple Developer account. Builds are signed with one **stable self-signed
   code-signing certificate** (stored as CI secrets), so every build has the same
   designated requirement. Notarization is skipped. Squirrel.Mac's check was verified to
   accept updates between two builds signed this way (`docs/fork/MAC_SIGNING.md`). The
-  certificate lives in `~/.t3-fork-signing/` on the Mac mini and in the fork's CI secrets.
-  Losing it breaks in-app updates on macOS, so the owner keeps a backup.
+  certificate lives in `~/.t3-fork-signing/` on the Mac mini and in the release repository's
+  Actions secrets. Losing it breaks in-app updates on macOS, so the owner keeps a backup.
 - **Build entry point**, the contract between the CI workflow and the packaging code:
   `node scripts/fork/build-desktop.ts --platform <mac|win> --arch <arm64|x64> --version <v> --out <dir>`.
-  Environment: `T3CODE_DESKTOP_UPDATE_REPOSITORY` (`owner/repo` of the fork) and, on macOS
-  only, `FORK_MAC_CERT_P12_BASE64` and `FORK_MAC_CERT_PASSWORD` (the self-signed identity,
-  common name `T3 Code Fork Signing`). It writes everything one release needs into
+  Environment: `T3CODE_DESKTOP_UPDATE_REPOSITORY` (`owner/repo` of the release repository)
+  and, on macOS only, `FORK_MAC_CERT_P12_BASE64` and `FORK_MAC_CERT_PASSWORD` (the
+  self-signed identity, common name `T3 Code Fork Signing`). It writes everything one release needs into
   `<dir>`: installers, the zip for macOS, blockmaps, and the electron-builder update
   metadata (`nightly-mac.yml` / `nightly.yml`, or whatever the build actually emits). It
   wraps `scripts/build-desktop-artifact.ts` and must not fork its logic.
@@ -283,6 +285,10 @@ alone.
   first; if you cannot prove isolation, do not launch the build and report why.
 - Do not push, create repositories, change GitHub settings or secrets, or open PRs or
   issues unless your task explicitly says so.
+- Keep GitHub Actions disabled in the code repository and preserve upstream's `.github/`
+  tree. The release workflow runs only in `JohnnyDoge/t3code-fork-releases` on its
+  default branch. Restrict write access to both repositories because the release workflow
+  builds and signs the code from the fork's `main`.
 - Never commit secrets, certificates or private keys. Generated signing material goes
   outside the repository, in a path your task names.
 

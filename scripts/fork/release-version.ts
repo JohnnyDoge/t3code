@@ -22,6 +22,7 @@ export function releaseVersion(
   date: string,
   runNumber: string,
   previousForkTag?: string,
+  officialTag?: string,
 ): string {
   if (!/^[1-9]\d{7}$/.test(date) || !/^[1-9]\d*$/.test(runNumber)) {
     throw new Error("Expected a UTC date as YYYYMMDD and a positive workflow run number.");
@@ -29,18 +30,33 @@ export function releaseVersion(
 
   const upstream = parseNightlyTag(upstreamTag);
   const previous = previousForkTag ? parseNightlyTag(previousForkTag) : undefined;
+  const official = officialTag ? parseNightlyTag(officialTag) : undefined;
   if (previous && isOlderBase(upstream.base, previous.base)) {
     throw new Error(
       `Upstream base ${upstream.base} is older than fork release ${previousForkTag}.`,
     );
   }
-  if (date < upstream.date || (previous && date < previous.date)) {
-    throw new Error("Release date precedes the upstream nightly or the last fork release.");
+  if (official && isOlderBase(upstream.base, official.base)) {
+    throw new Error(
+      `Upstream base ${upstream.base} is older than official nightly ${officialTag}. Sync the fork before releasing.`,
+    );
+  }
+  if (
+    date < upstream.date ||
+    (previous && date < previous.date) ||
+    (official && date < official.date)
+  ) {
+    throw new Error(
+      "Release date precedes the upstream nightly, official nightly or last fork release.",
+    );
   }
 
   let sequence = BigInt(runNumber);
   if (upstream.date === date && sequence <= upstream.sequence) {
     sequence = upstream.sequence + 1n;
+  }
+  if (official?.date === date && sequence <= official.sequence) {
+    sequence = official.sequence + 1n;
   }
   if (previous && sequence <= previous.sequence) {
     sequence = previous.sequence + 1n;
@@ -49,11 +65,13 @@ export function releaseVersion(
 }
 
 if (import.meta.main) {
-  const [upstreamTag, date, runNumber, previousForkTag] = process.argv.slice(2);
+  const [upstreamTag, date, runNumber, previousForkTag, officialTag] = process.argv.slice(2);
   if (!upstreamTag || !date || !runNumber) {
     throw new Error(
-      "Usage: release-version.ts <upstream-tag> <utc-date> <run-number> [previous-fork-tag]",
+      "Usage: release-version.ts <upstream-tag> <utc-date> <run-number> [previous-fork-tag] [official-tag]",
     );
   }
-  process.stdout.write(`${releaseVersion(upstreamTag, date, runNumber, previousForkTag)}\n`);
+  process.stdout.write(
+    `${releaseVersion(upstreamTag, date, runNumber, previousForkTag, officialTag)}\n`,
+  );
 }
