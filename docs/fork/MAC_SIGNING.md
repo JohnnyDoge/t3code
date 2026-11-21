@@ -29,15 +29,18 @@ quarantine, it checks the unpacked bundle against the fork certificate's pinned 
 (`8AAF3B790302EEBCE7A8931EC62A51E3462798EA`) and, when replacing a fork install, against
 the installed bundle's designated requirement. The previous bundle stays beside the target as
 `*.app.backup-<date>`. The script then opens the installed bundle. The fork uses
-bundle ID `com.t3tools.t3code.fork`, Electron profile
-`~/Library/Application Support/t3code-fork`, and T3 state in
-`~/.t3-fork/userdata`. An earlier build using the official bundle ID cannot update
-in place to this identity. Install the separate fork once.
+bundle ID `com.t3tools.t3code.fork` and shares
+`~/Library/Application Support/t3code-v2` and `~/.t3/userdata` with the official
+app. An earlier build using the official bundle ID cannot update in place to this
+identity. Quit the official app before installing or opening the fork.
 
 - **Keychain.** Electron `safeStorage` protects desktop connection secrets and Clerk sign-in
-  storage. The fork sets its own Electron app name before it opens credentials, so it uses its
-  own Safe Storage item. Sign in and add environments once in the fork. An authorization stored
-  for the fork's designated requirement should carry across builds using the same certificate.
+  storage. The fork uses the official `t3code Safe Storage` keychain item.
+  Because the fork has a different signature, macOS may ask whether it can access that
+  item in your login keychain. If asked, enter your login keychain password and choose
+  **Always Allow**. That grants the fork access to the existing key, so saved
+  credentials carry over. The grant should carry across fork updates signed with
+  the same designated requirement.
   [Apple code-signing requirements](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements/)
 - **Privacy permissions.** macOS checks the app’s designated requirement for permissions such
   as microphone access. The fork may request its own grants for

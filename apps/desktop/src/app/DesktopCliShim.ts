@@ -31,7 +31,6 @@ export const renderCliShim = (input: {
   readonly target: CliShimTarget;
   readonly shimPath: string;
   readonly t3Home: string;
-  readonly forceT3Home?: boolean; // fork(board)
 }) => {
   const { target } = input;
   if (target.kind === "windows") {
@@ -52,7 +51,7 @@ export const renderCliShim = (input: {
           ]
         : []),
       `set "T3CODE_CLI_PATH=${cmdText(input.shimPath)}"`,
-      `${input.forceT3Home ? "" : "if not defined T3CODE_HOME "}set "T3CODE_HOME=${cmdText(input.t3Home)}"`, // fork(board)
+      `if not defined T3CODE_HOME set "T3CODE_HOME=${cmdText(input.t3Home)}"`,
       'set "ELECTRON_RUN_AS_NODE=1"',
       // Electron's Windows executable starts without stdin; this tells the CLI to reopen the console.
       'set "T3CODE_DESKTOP_CLI_LAUNCHER=1"',
@@ -74,7 +73,7 @@ export const renderCliShim = (input: {
     `# ${MARKER}`,
     `export T3CODE_CLI_PATH=${shellWord(input.shimPath)}`,
     `home=${shellWord(input.t3Home)}`,
-    input.forceT3Home ? 'export T3CODE_HOME="$home"' : 'export T3CODE_HOME="${T3CODE_HOME:-$home}"', // fork(board)
+    'export T3CODE_HOME="${T3CODE_HOME:-$home}"',
     "export ELECTRON_RUN_AS_NODE=1",
     `app=${shellWord(target.kind === "appimage" ? target.appImage : target.executable)}`,
     'if [ ! -x "$app" ]; then',
@@ -166,12 +165,7 @@ export const install = Effect.gen(function* () {
         }),
         onNone: () => ({ kind: "direct" as const, executable: process.execPath, entry }),
       });
-  const content = renderCliShim({
-    target,
-    shimPath,
-    t3Home: environment.baseDir,
-    forceT3Home: environment.isFork ?? false,
-  }); // fork(board)
+  const content = renderCliShim({ target, shimPath, t3Home: environment.baseDir });
 
   return yield* Effect.gen(function* () {
     const existing = yield* fs.readFileString(shimPath).pipe(Effect.option);

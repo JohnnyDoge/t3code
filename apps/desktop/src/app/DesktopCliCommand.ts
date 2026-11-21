@@ -235,8 +235,7 @@ export const make = Effect.gen(function* () {
     );
 
   const state: DesktopCliCommand["Service"]["state"] = Effect.gen(function* () {
-    if (!environment.isPackaged || environment.isFork) {
-      // fork(board): The fork does not own the shared t3 command.
+    if (!environment.isPackaged) {
       return { supported: false, installedPath: null, onPath: false, launcherPath: null } as const;
     }
     const launcherPath = (yield* exists(launcher)) ? launcher : null;
@@ -294,7 +293,6 @@ export const make = Effect.gen(function* () {
   );
 
   const install: DesktopCliCommand["Service"]["install"] = Effect.gen(function* () {
-    if (environment.isFork) return yield* fail(`Run the fork launcher directly at ${launcher}.`); // fork(board)
     if (!environment.isPackaged) return yield* fail("The t3 command needs an installed app.");
     yield* ensureLauncher;
     if (windows) {
@@ -372,7 +370,6 @@ export const make = Effect.gen(function* () {
   }).pipe(Effect.withSpan("desktop.cliCommand.install"));
 
   const uninstall: DesktopCliCommand["Service"]["uninstall"] = Effect.gen(function* () {
-    if (environment.isFork) return yield* state; // fork(board)
     // A first launch put off for the shell PATH must not bring back what the user removed.
     yield* fs.writeFileString(firstLaunchMarker, "").pipe(Effect.ignore);
     if (windows) {
@@ -396,7 +393,6 @@ export const make = Effect.gen(function* () {
   // One at a time, so Settings and onboarding cannot both append the line.
   const addToPathPermit = yield* Semaphore.make(1);
   const addToPath: DesktopCliCommand["Service"]["addToPath"] = Effect.gen(function* () {
-    if (environment.isFork) return yield* fail(`Run the fork launcher directly at ${launcher}.`); // fork(board)
     const installed = yield* installedAt;
     if (Option.isNone(installed) || !(yield* leadsHere(installed.value))) {
       return yield* fail("Install the t3 command first.");
@@ -422,8 +418,7 @@ export const make = Effect.gen(function* () {
 
   const installOnFirstLaunch: DesktopCliCommand["Service"]["installOnFirstLaunch"] = Effect.gen(
     function* () {
-      if (!environment.isPackaged || environment.isFork || (yield* exists(firstLaunchMarker)))
-        return; // fork(board)
+      if (!environment.isPackaged || (yield* exists(firstLaunchMarker))) return;
       // Mark first so a failed or removed install is never retried behind the user's back.
       yield* fs.writeFileString(firstLaunchMarker, "");
       if (!freshInstall) {

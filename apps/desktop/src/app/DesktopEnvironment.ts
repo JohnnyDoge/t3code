@@ -18,7 +18,7 @@ import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePat
 import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
 import type { OtlpProtocol } from "@t3tools/shared/observability";
 // fork(board)
-import { forkDesktop, resolveForkHome } from "../fork/identity.ts";
+import { forkDesktop } from "../fork/identity.ts";
 
 export interface MakeDesktopEnvironmentInput {
   readonly dirname: string;
@@ -42,7 +42,6 @@ export class DesktopEnvironment extends Context.Service<
     readonly processArch: string;
     readonly isPackaged: boolean;
     readonly isDevelopment: boolean;
-    readonly isFork?: boolean; // fork(board)
     readonly appVersion: string;
     readonly appPath: string;
     readonly resourcesPath: string;
@@ -109,11 +108,10 @@ export function resolveDesktopAppBranding(input: {
   readonly isFork?: boolean; // fork(board)
 }): DesktopAppBranding {
   const stageLabel = resolveDesktopAppStageLabel(input);
-  const baseName = input.isFork ? forkDesktop.baseName : APP_BASE_NAME; // fork(board)
   return {
-    baseName,
+    baseName: APP_BASE_NAME,
     stageLabel,
-    displayName: `${baseName} (${stageLabel})`,
+    displayName: input.isFork ? forkDesktop.productName : `${APP_BASE_NAME} (${stageLabel})`, // fork(board)
   };
 }
 
@@ -153,7 +151,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
   const path = yield* Path.Path;
   const config = yield* DesktopConfig.DesktopConfig;
   const homeDirectory = input.homeDirectory;
-  const devServerUrl = input.isFork ? Option.none() : config.devServerUrl; // fork(board)
+  const devServerUrl = config.devServerUrl;
   const isDevelopment = Option.isSome(devServerUrl);
   const appDataDirectory =
     input.platform === "win32"
@@ -163,18 +161,11 @@ const make = Effect.fn("desktop.environment.make")(function* (
       : input.platform === "darwin"
         ? path.join(homeDirectory, "Library", "Application Support")
         : Option.getOrElse(config.xdgConfigHome, () => path.join(homeDirectory, ".config"));
-  // fork(board): Ignore the official app's T3CODE_HOME even when inherited.
-  const baseDir = input.isFork
-    ? resolveForkHome(
-        homeDirectory,
-        Option.getOrUndefined(yield* DesktopConfig.trimmedString("T3CODE_FORK_SCRATCH_PARENT")),
-        path,
-      )
-    : resolveDesktopBaseDir({
-        homeDirectory,
-        joinPath: path.join,
-        t3Home: config.t3Home,
-      });
+  const baseDir = resolveDesktopBaseDir({
+    homeDirectory,
+    joinPath: path.join,
+    t3Home: config.t3Home,
+  });
   const rootDir = path.resolve(input.dirname, "../../..");
   const appRoot = input.isPackaged ? input.appPath : rootDir;
   const serverRoot =
@@ -206,7 +197,6 @@ const make = Effect.fn("desktop.environment.make")(function* (
     processArch: input.processArch,
     isPackaged: input.isPackaged,
     isDevelopment,
-    ...(input.isFork ? { isFork: true } : {}), // fork(board)
     appVersion: input.appVersion,
     appPath: input.appPath,
     resourcesPath,
@@ -234,7 +224,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
       : path.join(input.appPath, "dev-app-update.yml"),
     devServerUrl,
     devRemoteT3ServerEntryPath: config.devRemoteT3ServerEntryPath,
-    configuredBackendPort: input.isFork ? Option.none() : config.configuredBackendPort, // fork(board)
+    configuredBackendPort: config.configuredBackendPort,
     commitHashOverride: config.commitHashOverride,
     otlpTracesUrl: config.otlpTracesUrl,
     otlpMetricsUrl: config.otlpMetricsUrl,

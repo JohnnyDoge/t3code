@@ -65,7 +65,6 @@ function layerEnvironment(
     readonly appPath?: string;
     readonly dirname?: string;
     readonly isPackaged?: boolean;
-    readonly isFork?: boolean; // fork(board)
     readonly devServerUrl?: string;
     readonly platform?: NodeJS.Platform;
     readonly resourcesPath?: string;
@@ -84,7 +83,6 @@ function layerEnvironment(
     appVersion: options?.appVersion ?? "1.2.3",
     appPath: options?.appPath ?? "/repo",
     isPackaged: options?.isPackaged ?? true,
-    isFork: options?.isFork ?? false, // fork(board)
     resourcesPath: options?.resourcesPath ?? "/missing/resources",
     runningUnderArm64Translation: false,
   }).pipe(
@@ -149,7 +147,6 @@ interface PackagedWslHarnessContext {
 const withPackagedWslHarness = <A, E, R>(
   input: {
     readonly archiveHash: string;
-    readonly isFork?: boolean; // fork(board)
     readonly wsl: (
       context: PackagedWslHarnessContext,
     ) => DesktopWslEnvironment.DesktopWslEnvironmentTestStub;
@@ -223,7 +220,6 @@ const withPackagedWslHarness = <A, E, R>(
               appPath: baseDir,
               platform: "win32",
               resourcesPath: baseDir,
-              isFork: input.isFork ?? false, // fork(board)
             }),
           ),
         ),
@@ -394,11 +390,7 @@ describe("DesktopBackendConfiguration", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  // fork(board): Check staging, launch and pruning all use the distro's fork home.
-  it.effect.each([
-    { isFork: false, expectedHome: "/home/test/.config/t3" },
-    { isFork: true, expectedHome: "/home/test/.t3-fork" },
-  ])("resolveWsl launches a packaged backend from $expectedHome", ({ isFork, expectedHome }) => {
+  it.effect("resolveWsl launches a packaged backend from the WSL-local runtime cache", () => {
     const observedArchives: Array<{
       windowsArchivePath: string;
       runtimeId: string;
@@ -407,19 +399,18 @@ describe("DesktopBackendConfiguration", () => {
     }> = [];
     let probeCount = 0;
     let legacyCleanupCount = 0;
-    const linuxAppRoot = `${expectedHome}/wsl-runtime/1.2.3-x64`;
+    const t3Home = "/home/test/.config/t3";
+    const linuxAppRoot = `${t3Home}/wsl-runtime/1.2.3-x64`;
     const resolvedPath = "/home/test/.local/bin:/usr/bin:/bin";
 
     return withPackagedWslHarness(
       {
         archiveHash: "a".repeat(64),
-        isFork,
         forbidFallback: "A valid WSL archive must not extract the Windows fallback",
         cleanupLegacy: Effect.sync(() => {
           legacyCleanupCount += 1;
         }),
         wsl: () => ({
-          getUserHome: () => Option.some("/home/test"),
           prepareRuntime: (_distro, archive, archiveT3Home) => {
             observedArchives.push({
               windowsArchivePath: archive.windowsPath,
@@ -431,7 +422,7 @@ describe("DesktopBackendConfiguration", () => {
           },
           probeRuntime: () => {
             probeCount += 1;
-            return { ok: true, resolvedPath, t3Home: "/home/test/.config/t3" };
+            return { ok: true, resolvedPath, t3Home };
           },
           ensureNodePty: () => {
             throw new Error("the staged runtime must not probe for node-pty");
@@ -449,7 +440,7 @@ describe("DesktopBackendConfiguration", () => {
               windowsArchivePath: archivePath,
               runtimeId: `sha256-${archiveHash}`,
               sha256: archiveHash,
-              t3Home: expectedHome,
+              t3Home,
             },
           ]);
           assert.equal(probeCount, 1);
@@ -465,14 +456,14 @@ describe("DesktopBackendConfiguration", () => {
             "--exec",
             "env",
             `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${resolvedPath}`,
-            `T3CODE_HOME=${expectedHome}`,
+            `T3CODE_HOME=${t3Home}`,
             `${linuxAppRoot}/t3`,
             "--bootstrap-fd",
             "0",
           ]);
           assert.notInclude(config.args, "/usr/bin/node");
           assert.equal(config.wslRuntimeId, `sha256-${archiveHash}`);
-          assert.equal(config.wslT3Home, expectedHome);
+          assert.equal(config.wslT3Home, t3Home);
           assert.equal(legacyCleanupCount, 1);
           assert.isTrue(Option.isNone(config.preflightFailure));
         }),

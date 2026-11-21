@@ -3,8 +3,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
-// fork(board)
-import { forkDesktop } from "../fork/identity.ts";
 
 export class DesktopUserDataInitializationError extends Schema.TaggedError<DesktopUserDataInitializationError>()(
   "DesktopUserDataInitializationError",
@@ -38,12 +36,9 @@ export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPa
     readonly appDataDirectory: string;
     readonly isDevelopment: boolean;
     readonly platform: NodeJS.Platform;
-    readonly isFork?: boolean; // fork(board)
   }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    // fork(board): Skip Windows Local State migration from the official profile.
-    if (input.isFork) return path.join(input.appDataDirectory, forkDesktop.userDataName);
     const names = input.isDevelopment
       ? { current: "t3code-dev", legacy: "T3 Code (Dev)" }
       : { current: "t3code-v2", legacy: "T3 Code (Alpha)" };

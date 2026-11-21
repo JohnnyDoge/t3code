@@ -2828,17 +2828,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
 ) {
-  // fork(board): The staged package identifies the fork before Electron opens its profile.
-  const isFork = yield* ForkDesktopBuild;
-  const productName = resolveDesktopProductName(version, isFork);
-  const appProtocol = isFork
-    ? { name: productName, schemes: [forkDesktop.scheme] }
-    : { name: "T3 Code", schemes: ["t3code", "t3code-dev"] };
+  const isFork = yield* ForkDesktopBuild; // fork(board)
+  const productName = resolveDesktopProductName(version, isFork); // fork(board)
   const buildConfig: Record<string, unknown> = {
     afterPack: (yield* Path.Path).join(yield* RepoRoot, "scripts/prepare-server-compile-cache.cjs"),
     appId: isFork ? forkDesktop.appId : DESKTOP_APP_ID, // fork(board)
     productName,
-    ...(isFork ? { extraMetadata: { productName } } : {}), // fork(board)
     artifactName: "T3-Code-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     // runAsNode stays on: the app starts its server, helpers and the `t3` shim by running this
@@ -2931,7 +2926,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         ],
       },
       protocols: [
-        appProtocol, // fork(board)
+        {
+          name: "T3 Code",
+          schemes: ["t3code", "t3code-dev"],
+        },
         {
           name: "Web site URL",
           schemes: ["http", "https"],
@@ -3029,7 +3027,6 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   }
 
   if (platform === "win") {
-    if (isFork) buildConfig.protocols = [appProtocol]; // fork(board)
     buildConfig.npmRebuild = false;
     buildConfig.nsis = {
       differentialPackage: true,
@@ -3988,7 +3985,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       : undefined;
   const isFork = yield* ForkDesktopBuild; // fork(board)
   const stagePackageJson: StagePackageJson = {
-    name: isFork ? forkDesktop.packageName : "t3code", // fork(board): Isolate updater cache and installer paths.
+    name: isFork ? forkDesktop.packageName : forkDesktop.sharedRuntimeName, // fork(board): Isolate updater cache and installer paths.
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,

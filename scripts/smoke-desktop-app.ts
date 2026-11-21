@@ -9,8 +9,6 @@ import * as NodePath from "node:path";
 import * as NodeTimersPromises from "node:timers/promises";
 import * as NodeUtil from "node:util";
 import { chromium, type Browser } from "playwright-core";
-// fork(board)
-import forkDesktop from "./fork/desktop-identity.json" with { type: "json" };
 
 // A snapshot from an older build on purpose: the packaged server must migrate it forward, as it
 // does for every upgrading user. It holds one project and two threads, nothing else.
@@ -25,18 +23,17 @@ const { values } = NodeUtil.parseArgs({
     // An unpackaged app directory for a plain Electron executable, as PR CI runs it.
     app: { type: "string" },
     "artifacts-dir": { type: "string" },
-    fork: { type: "boolean" }, // fork(board)
   },
 });
 const executable = values.executable;
 if (!executable)
   throw new Error(
-    "Usage: smoke-desktop-app.ts --executable <app> [--app <dir>] [--artifacts-dir <dir>] [--fork]", // fork(board)
+    "Usage: smoke-desktop-app.ts --executable <app> [--app <dir>] [--artifacts-dir <dir>]",
   );
 const artifactsDir = NodePath.resolve(values["artifacts-dir"] ?? "desktop-launch-check");
 
 const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-desktop-launch-"));
-const t3Home = NodePath.join(home, values.fork ? forkDesktop.homeName : "t3"); // fork(board)
+const t3Home = NodePath.join(home, "t3");
 NodeFS.mkdirSync(NodePath.join(t3Home, "userdata"), { recursive: true });
 NodeFS.copyFileSync(FIXTURE_DB, NodePath.join(t3Home, "userdata/statev2.sqlite"));
 
@@ -88,7 +85,6 @@ try {
         XDG_CONFIG_HOME: NodePath.join(home, ".config"),
         XDG_DATA_HOME: NodePath.join(home, ".local/share"),
         T3CODE_HOME: t3Home,
-        ...(values.fork ? { T3CODE_FORK_SCRATCH_PARENT: home } : {}), // fork(board)
         T3CODE_TELEMETRY_ENABLED: "false",
         T3CODE_DISABLE_AUTO_UPDATE: "true",
       },

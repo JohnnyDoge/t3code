@@ -1,10 +1,6 @@
 {
   "appId": "com.t3tools.t3code.fork",
-  "baseName": "T3 Code Fork",
   "productName": "T3 Code Fork (Nightly)",
   "packageName": "t3code-fork",
-  "userDataName": "t3code-fork",
-  "homeName": ".t3-fork",
-  "scheme": "t3code-fork",
-  "firstPort": 4773
+  "sharedRuntimeName": "t3code"
 }

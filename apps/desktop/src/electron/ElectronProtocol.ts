@@ -11,24 +11,21 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
-// fork(board)
-import { forkDesktop } from "../fork/identity.ts";
 
 export const DESKTOP_HOST = "app";
 const DESKTOP_PRODUCTION_SCHEME = "t3code";
 const DESKTOP_DEVELOPMENT_SCHEME = "t3code-dev";
 
-export function getDesktopScheme(isDevelopment: boolean, isFork?: boolean): string {
-  if (isFork) return forkDesktop.scheme; // fork(board)
+export function getDesktopScheme(isDevelopment: boolean): string {
   return isDevelopment ? DESKTOP_DEVELOPMENT_SCHEME : DESKTOP_PRODUCTION_SCHEME;
 }
 
-export function getDesktopOrigin(isDevelopment: boolean, isFork?: boolean): string {
-  return `${getDesktopScheme(isDevelopment, isFork)}://${DESKTOP_HOST}`; // fork(board)
+export function getDesktopOrigin(isDevelopment: boolean): string {
+  return `${getDesktopScheme(isDevelopment)}://${DESKTOP_HOST}`;
 }
 
-export function getDesktopUrl(isDevelopment: boolean, isFork?: boolean): string {
-  return `${getDesktopOrigin(isDevelopment, isFork)}/`; // fork(board)
+export function getDesktopUrl(isDevelopment: boolean): string {
+  return `${getDesktopOrigin(isDevelopment)}/`;
 }
 
 export class ElectronProtocolRegistrationError extends Schema.TaggedError<ElectronProtocolRegistrationError>()(

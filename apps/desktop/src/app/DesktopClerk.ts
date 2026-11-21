@@ -23,8 +23,6 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopUserData from "./DesktopUserData.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
-// fork(board)
-import { toOfficialLink } from "../fork/identity.ts";
 
 declare const __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: string | undefined;
 
@@ -87,16 +85,14 @@ export const desktopClerkFrontendApiHostname = resolveDesktopClerkFrontendApiHos
     : __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__,
 );
 
-// fork(board): Keep the registration and renderer origin on the same app scheme.
-function createDesktopClerkBridge(tokenDirectory: string, isDevelopment: boolean, isFork?: boolean) {
+function createDesktopClerkBridge(tokenDirectory: string, isDevelopment: boolean) {
   return createClerkBridge({
     storage: storage({ path: tokenDirectory }),
     manageSingleInstanceLock: false,
     passkeys: true,
     renderer: {
-      scheme: ElectronProtocol.getDesktopScheme(isDevelopment, isFork), // fork(board)
+      scheme: ElectronProtocol.getDesktopScheme(isDevelopment),
       host: ElectronProtocol.DESKTOP_HOST,
-      ...(isFork ? { privileges: { codeCache: true } } : {}), // fork(board)
     },
   });
 }
@@ -111,11 +107,6 @@ export const make = Effect.gen(function* () {
   // Must not yield: the bridge registers a scheme Electron rejects once ready.
   const userDataPath = yield* DesktopUserData.resolveUserDataPath(environment);
   yield* electronApp.setPath("userData", userDataPath);
-  // fork(board): Set the fork's stable Safe Storage name before any credential access.
-  if (environment.isFork)
-    yield* electronApp.setName(
-      `${environment.branding.baseName} ${environment.branding.stageLabel}`,
-    );
 
   // Clerk skips the profile lock on macOS. Interrupt before runtime construction because quit is asynchronous.
   if (!(yield* electronApp.requestSingleInstanceLock)) {
@@ -151,8 +142,7 @@ export const make = Effect.gen(function* () {
         createDesktopClerkBridge(
           path.resolve(environment.stateDir, "clerk"),
           environment.isDevelopment,
-          environment.isFork,
-        ), // fork(board)
+        ),
       catch: (cause) =>
         new DesktopClerkBridgeInitializationError({
           stateDir: environment.stateDir,
@@ -181,9 +171,8 @@ export const make = Effect.gen(function* () {
       const runPromise = Effect.runPromiseWith(context);
 
       const startProviderAuthHandoff = (value: string | undefined) => {
-        const link = toOfficialLink(value, environment.isFork); // fork(board)
-        if (!link) return false;
-        const request = readCodexAuthHandoff(link, environment.isDevelopment);
+        if (!value) return false;
+        const request = readCodexAuthHandoff(value, environment.isDevelopment);
         if (!request) return false;
         void runPromise(
           Effect.gen(function* () {
@@ -209,21 +198,14 @@ export const make = Effect.gen(function* () {
         return true;
       };
       const resumeProviderAuth = (value: string | undefined) => {
-        // fork(board): Use the stock parser, then return to the fork renderer.
-        const destination = providerAuthReturnUrl(toOfficialLink(value, environment.isFork));
-        const expectedOrigin = ElectronProtocol.getDesktopUrl(environment.isDevelopment);
-        const rendererOrigin = ElectronProtocol.getDesktopUrl(
-          environment.isDevelopment,
-          environment.isFork,
-        );
-        if (!destination?.startsWith(expectedOrigin)) return false; // fork(board)
+        const destination = providerAuthReturnUrl(value);
+        const expectedOrigin = `${ElectronProtocol.getDesktopScheme(environment.isDevelopment)}://app`;
+        if (!destination?.startsWith(`${expectedOrigin}/`)) return false;
         void runPromise(
           Effect.gen(function* () {
             const mainWindow = yield* electronWindow.currentMainOrFirst;
             if (Option.isNone(mainWindow)) return;
-            yield* Effect.promise(() =>
-              mainWindow.value.loadURL(rendererOrigin + destination.slice(expectedOrigin.length)),
-            ); // fork(board)
+            yield* Effect.promise(() => mainWindow.value.loadURL(destination));
             yield* electronWindow.reveal(mainWindow.value);
           }).pipe(
             Effect.catchCause((cause) =>

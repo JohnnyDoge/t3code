@@ -39,12 +39,10 @@ it.effect.each([
       assert.equal(official.productName, "T3 Code (Nightly)");
       assert.equal(fork.appId, "com.t3tools.t3code.fork");
       assert.equal(fork.productName, "T3 Code Fork (Nightly)");
-      assert.deepStrictEqual(fork.extraMetadata, { productName: "T3 Code Fork (Nightly)" });
+      assert.isUndefined(fork.extraMetadata);
       assert.equal(fork.artifactName, official.artifactName);
-      assert.deepNestedPropertyVal(fork, platform === "mac" ? "mac.protocols[0]" : "protocols[0]", {
-        name: "T3 Code Fork (Nightly)",
-        schemes: ["t3code-fork"],
-      });
+      assert.deepStrictEqual(fork.mac, official.mac);
+      assert.isUndefined(fork.protocols);
       assert.deepStrictEqual(fork.publish, [
         {
           provider: "github",

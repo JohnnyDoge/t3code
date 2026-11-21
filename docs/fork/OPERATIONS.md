@@ -84,9 +84,9 @@ Windows Server 2025. The macOS ARM64 job uses `macos-26` and checks for a macOS 
 newer SDK before compiling the Apple Speech helper. It opens the signed app from
 the DMG against a seeded test database.
 
-T3 Connect uses the public Clerk and relay configuration from the fork commit's
-`.env.example`. These are the production identifiers used by upstream, so signing
-in gives access to the same linked environments. The self-signed macOS build
+T3 Connect uses the same production Clerk and relay configuration as upstream.
+An existing sign-in carries over with the shared profile. For a new sign-in, the
+running app registers the shared `t3code://` callback. The self-signed macOS build
 uses system-browser sign-in and lacks Apple-provisioned native passkeys.
 
 The workflow validates the versions, file names, SHA-512 hashes, sizes and blockmaps in
@@ -97,50 +97,27 @@ eight fork prereleases and their tags.
 
 ## Install and first run
 
-Install **T3 Code Fork (Nightly)** alongside the official app. Run the
-[macOS installer](MAC_SIGNING.md) or run the Windows x64 installer from the
-[release repository](https://github.com/JohnnyDoge/t3code-fork-releases/releases).
-On Windows, use the fork installer's default location and open the **T3 Code Fork
-(Nightly)** shortcut. On macOS, open **T3 Code Fork (Nightly)** from Applications.
+Install **T3 Code Fork (Nightly)** alongside the official app. Quit the official app
+before running the [macOS installer](MAC_SIGNING.md), which opens the fork after
+installation. On Windows, run the x64 installer from the
+[release repository](https://github.com/JohnnyDoge/t3code-fork-releases/releases)
+and use its default install folder and **T3 Code Fork (Nightly)** shortcut.
 Use the fork's built-in updater for subsequent fork releases.
 
-The fork starts with an empty local environment. Its database, logs, settings, and
-saved environment credentials live under `~/.t3-fork/userdata` (on Windows,
-`%USERPROFILE%\.t3-fork\userdata`). Electron uses
-`~/Library/Application Support/t3code-fork` on macOS and `%APPDATA%\t3code-fork`
-on Windows. The fork leaves the shared `t3` command alone. To run the fork's
-bundled CLI, use `~/.t3-fork/bin/t3` or `%USERPROFILE%\.t3-fork\bin\t3.cmd`.
+To switch, fully quit the official app and open the fork. Your projects, threads,
+settings, sign-in and linked environments use the same local data. Quit the fork
+before switching back. On macOS, choose **Always Allow** if prompted to give the
+fork access to the shared Safe Storage key. See [macOS signing](MAC_SIGNING.md).
 
-## Open official threads in the fork
+Both apps use the normal T3 home (`~/.t3` or an explicit `T3CODE_HOME`), the
+same WSL home, and the same Electron profile (`t3code-v2`). The backend still
+scans from port 3773 when no port is configured. The shared `t3` launcher follows
+the app that last launched and refreshed it. If you remove that app, open the
+other one to refresh the launcher.
 
-Keep the official app open on each machine whose threads you want to work with.
-To connect both apps on the same machine:
-
-1. In the **official** app, open **Settings → Sharing & access → Authorized
-   clients** and select **Create pairing link**. Use the standard client permissions
-   so the fork can read threads and update their board tags.
-2. If the new link offers **Share**, choose **This machine** and copy its
-   `http://127.0.0.1:<port>` pairing URL. In local-only mode the official app
-   shows **Copy code** instead. Copy the code and read the `origin` field in the
-   official app's `~/.t3/userdata/server-runtime.json` (on Windows,
-   `%USERPROFILE%\.t3\userdata\server-runtime.json`) for the host and port.
-   Leave the official app running.
-3. In the **fork**, open **Settings → Environments → Add environment** and
-   paste the URL, or enter the origin and code in the pairing form. Label the environment so you can
-   distinguish it from the fork's **Local environment**. Once it connects, open the
-   task board to see threads from it and your other connected environments.
-
-If the official app offers no usable loopback link, enable **Network access** in
-its **Sharing & access** settings, wait for its backend to restart, then create a
-fresh link and select the official server's LAN address. Leave network access
-enabled while using a LAN link. This restart can interrupt active turns, so wait
-until the official environment is idle. Machine policy can restrict pairing.
-
-For environments already linked through T3 Connect, sign in within the fork and
-connect to the listed official machines from **Settings → Environments**. This
-uses the same account with a separate fork sign-in. Hosted links that open
-`t3code://` go to the official app. Paste the full HTTP pairing URL in the fork
-when adding an environment there.
-
-The apps keep separate settings. If you enable Tailscale HTTPS in both apps on
-one machine, choose a different Serve port for each.
+Switch between builds from the same upstream nightly when possible. A newer
+build may migrate the shared database. Desktop startup in an older build can
+skip newer migration IDs and still open the database, but an incompatible schema
+or stored event can break reads, writes or replay. If the older build cannot
+handle the shared data, reopen the build that migrated it or a later compatible
+build.
