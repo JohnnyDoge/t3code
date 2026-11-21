@@ -6,7 +6,12 @@ import { Button } from "../../components/ui/button";
 import { useResizeDrag } from "../../hooks/useResizeDrag";
 import { cn } from "../../lib/utils";
 import { BOARD_THREAD_DRAG_TYPE } from "./BoardCard";
-import { BOARD_COLUMN_WIDTH, clampBoardColumnWidth, type BoardColumnLayout } from "./boardLayout";
+import {
+  BOARD_COLUMN_WIDTH,
+  clampBoardColumnWidth,
+  isBoardColumnSlim,
+  type BoardColumnLayout,
+} from "./boardLayout";
 import type { BoardColumnId } from "./boardModel";
 
 const RESIZE_STEP = 16;
@@ -16,6 +21,7 @@ export function BoardColumn({
   layout,
   count,
   acceptsDrag,
+  headerAction,
   children,
   onToggleCollapsed,
   onResize,
@@ -25,6 +31,7 @@ export function BoardColumn({
   readonly layout: BoardColumnLayout;
   readonly count: number;
   readonly acceptsDrag: boolean;
+  readonly headerAction?: ReactNode;
   readonly children: ReactNode;
   readonly onToggleCollapsed: (id: BoardColumnId) => void;
   readonly onResize: (id: BoardColumnId, width: number) => void;
@@ -36,6 +43,7 @@ export function BoardColumn({
   const contentId = useId();
   const panel = useRef<HTMLElement>(null);
   const { id, width, collapsed } = layout;
+  const slim = isBoardColumnSlim(collapsed, count, acceptsDrag);
   const title = messages(label);
   const { ref, onPointerDown, onPointerMove, onPointerUp, onPointerCancel, onLostPointerCapture } =
     useResizeDrag<HTMLDivElement>(() => {
@@ -64,7 +72,7 @@ export function BoardColumn({
       className={cn(
         "relative flex min-h-0 shrink-0 flex-col rounded-xl border border-border/75 bg-muted/30",
         "data-accepts-drag:border-primary/65 data-accepts-drag:bg-primary/8",
-        collapsed ? "w-11" : "w-[var(--board-resize-width,var(--board-column-width))]",
+        slim ? "w-11" : "w-[var(--board-resize-width,var(--board-column-width))]",
       )}
       style={{ "--board-column-width": `${width}px` } as CSSProperties}
       onDragOver={(event) => {
@@ -77,14 +85,14 @@ export function BoardColumn({
       <header
         className={cn(
           "flex shrink-0 items-center gap-2 p-2",
-          collapsed ? "flex-col" : "min-h-11 border-b border-border/65 ps-3",
+          slim ? "flex-col" : "min-h-11 border-b border-border/65 ps-3",
         )}
       >
         <h2
           id={labelId}
           className={cn(
             "text-sm font-semibold",
-            collapsed ? "order-last [writing-mode:vertical-rl]" : "min-w-0 truncate",
+            slim ? "order-last [writing-mode:vertical-rl]" : "min-w-0 truncate",
           )}
         >
           {title}
@@ -92,31 +100,34 @@ export function BoardColumn({
         <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground tabular-nums">
           {count}
         </span>
-        <div className={collapsed ? "order-first" : "ms-auto"}>
-          <Button
-            variant="ghost-muted"
-            size="icon-xs"
-            aria-label={
-              collapsed
-                ? gt("Expand {column}", { column: title })
-                : gt("Collapse {column}", { column: title })
-            }
-            aria-expanded={!collapsed}
-            aria-controls={contentId}
-            onClick={() => onToggleCollapsed(id)}
-          >
-            {collapsed ? <PanelLeftOpenIcon /> : <PanelLeftCloseIcon />}
-          </Button>
-        </div>
+        {slim && !collapsed ? null : (
+          <div className={slim ? "order-first flex flex-col gap-1" : "ms-auto flex gap-1"}>
+            {collapsed ? null : headerAction}
+            <Button
+              variant="ghost-muted"
+              size="icon-xs"
+              aria-label={
+                collapsed
+                  ? gt("Expand {column}", { column: title })
+                  : gt("Collapse {column}", { column: title })
+              }
+              aria-expanded={!collapsed}
+              aria-controls={contentId}
+              onClick={() => onToggleCollapsed(id)}
+            >
+              {collapsed ? <PanelLeftOpenIcon /> : <PanelLeftCloseIcon />}
+            </Button>
+          </div>
+        )}
       </header>
       <div
         id={contentId}
-        hidden={collapsed}
+        hidden={slim}
         className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-2"
       >
         {children}
       </div>
-      {collapsed ? null : (
+      {slim ? null : (
         <div
           ref={ref}
           role="separator"

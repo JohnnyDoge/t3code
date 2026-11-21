@@ -1,6 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
 import {
+  canSnooze,
   effectiveSnoozed,
   type ThreadSnoozeShell,
 } from "@t3tools/client-runtime/state/thread-settled";
@@ -8,7 +9,10 @@ import { toSortableTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 import { isListedThreadLineage } from "@t3tools/contracts";
 import { msg } from "gt-react";
 
-import { resolveSidebarThreadStatus } from "../../components/Sidebar.logic";
+import {
+  resolveSidebarThreadSection,
+  resolveSidebarThreadStatus,
+} from "../../components/Sidebar.logic";
 import type { SidebarThreadSummary } from "../../types";
 import type { BoardOp } from "./boardOps";
 
@@ -55,7 +59,7 @@ export type BoardThread = Pick<
   | "settledOverride"
   | "updatedAt"
 > &
-  ThreadSnoozeShell;
+  ThreadSnoozeShell & { readonly shelfAvailable?: boolean };
 
 export const BOARD_TAG_PREFIX = "kb:";
 const SEEN_TAG_PREFIX = `${BOARD_TAG_PREFIX}seen:`;
@@ -91,8 +95,12 @@ export function resolveBoardColumn(
   now: string,
 ): BoardColumnId | null {
   if (thread.archivedAt !== null || !isListedThreadLineage(thread.lineage)) return null;
-  if (thread.settledOverride === "settled") return "settled";
-  if (effectiveSnoozed(thread, { now })) return "snoozed";
+  const section = resolveSidebarThreadSection({
+    snoozed: thread.shelfAvailable !== false && effectiveSnoozed(thread, { now }),
+    settled: thread.shelfAvailable !== false && thread.settledOverride === "settled",
+    pinned: thread.pinnedAt != null,
+  });
+  if (section === "snoozed" || section === "settled") return section;
 
   const run = thread.latestRun;
   switch (resolveSidebarThreadStatus(thread)) {
@@ -107,12 +115,15 @@ export function resolveBoardColumn(
     case "waiting":
       return "waiting";
     case "failed":
-      return run?.status === "failed" && tags.includes(seenTag(run.runId)) ? "done" : "failed";
+      if (run?.status !== "failed") return "failed";
+      if (tags.includes(todoTag(run.runId))) return "todo";
+      return tags.includes(seenTag(run.runId)) ? "done" : "failed";
     case "ready":
+      if (tags.includes(todoTag(run?.runId ?? null))) return "todo";
       if (run !== null && isReviewableRun(run) && !tags.includes(seenTag(run.runId))) {
         return "review";
       }
-      return tags.includes(todoTag(run?.runId ?? null)) ? "todo" : "done";
+      return "done";
   }
 }
 
@@ -150,27 +161,69 @@ export function groupThreadsByColumn<T extends BoardThread>(
 function planTagChanges(
   tags: ReadonlyArray<string>,
   runId: string | null,
-  changes: { readonly seen?: boolean | undefined; readonly todo?: boolean } = {},
+  mark: "seen" | "todo" | null,
 ): BoardOp[] {
-  const currentSeen = runId === null ? null : seenTag(runId);
-  const currentTodo = todoTag(runId);
+  const retainedTag =
+    mark === "todo" ? todoTag(runId) : mark === "seen" && runId !== null ? seenTag(runId) : null;
   const ops: BoardOp[] = [];
 
-  if (changes.todo === true && !tags.includes(currentTodo)) {
-    ops.push({ kind: "tag", tag: currentTodo, tagged: true });
+  if (retainedTag !== null && !tags.includes(retainedTag)) {
+    ops.push({ kind: "tag", tag: retainedTag, tagged: true });
   }
-  if (changes.seen === true && currentSeen !== null && !tags.includes(currentSeen)) {
-    ops.push({ kind: "tag", tag: currentSeen, tagged: true });
+  const removals = new Set(tags);
+  if (mark === null && runId !== null && removals.delete(todoTag(runId))) {
+    // When both marks exist, removing To do first would briefly reveal Done.
+    removals.add(todoTag(runId));
   }
-
-  for (const tag of new Set(tags)) {
-    const removeSeen =
-      tag.startsWith(SEEN_TAG_PREFIX) && (changes.seen === false || tag !== currentSeen);
-    const removeTodo =
-      tag.startsWith(TODO_TAG_PREFIX) && (changes.todo === false || tag !== currentTodo);
-    if (removeSeen || removeTodo) ops.push({ kind: "tag", tag, tagged: false });
+  for (const tag of removals) {
+    if (
+      tag !== retainedTag &&
+      (tag.startsWith(SEEN_TAG_PREFIX) || tag.startsWith(TODO_TAG_PREFIX))
+    ) {
+      ops.push({ kind: "tag", tag, tagged: false });
+    }
   }
   return ops;
+}
+
+function currentMark(tags: ReadonlyArray<string>, runId: string | null): "seen" | "todo" | null {
+  if (tags.includes(todoTag(runId))) return "todo";
+  return runId !== null && tags.includes(seenTag(runId)) ? "seen" : null;
+}
+
+function resolveDropResult(
+  thread: BoardThread,
+  tags: ReadonlyArray<string>,
+  ops: ReadonlyArray<BoardOp>,
+  now: string,
+): BoardColumnId | null {
+  const shell = { ...thread };
+  const nextTags = new Set(tags);
+  for (const op of ops) {
+    switch (op.kind) {
+      case "tag":
+        if (op.tagged) nextTags.add(op.tag);
+        else nextTags.delete(op.tag);
+        break;
+      case "settle":
+        Object.assign(shell, { settledOverride: "settled", snoozedUntil: null, snoozedAt: null });
+        break;
+      case "unsettle":
+        Object.assign(shell, { settledOverride: "active" });
+        break;
+      case "unsnooze":
+        Object.assign(shell, { snoozedUntil: null, snoozedAt: null });
+        break;
+      case "open-snooze-menu":
+        // Preview the result once the user picks a future wake time.
+        Object.assign(shell, {
+          snoozedAt: now,
+          snoozedUntil: new Date(Date.parse(now) + 1).toISOString(),
+        });
+        break;
+    }
+  }
+  return resolveBoardColumn(shell, [...nextTags], now);
 }
 
 export type BoardDropPlan =
@@ -184,45 +237,56 @@ export function planBoardDrop(
   now: string,
 ): BoardDropPlan {
   const current = resolveBoardColumn(thread, tags, now);
-  if (current === null) return { accepted: false };
+  if (current === null || !BOARD_COLUMNS.find(({ id }) => id === target)?.acceptsDrops) {
+    return { accepted: false };
+  }
   if (current === target) return { accepted: true, ops: [] };
 
-  const run = thread.latestRun;
-  const runId = run?.runId ?? null;
+  const runId = thread.latestRun?.runId ?? null;
   let ops: BoardOp[];
   switch (target) {
     case "todo":
-      ops = planTagChanges(tags, runId, {
-        todo: true,
-        seen: run?.completedAt != null ? true : undefined,
-      });
+      ops = planTagChanges(tags, runId, "todo");
       break;
     case "review":
-      if (run === null || !isReviewableRun(run)) return { accepted: false };
-      ops = planTagChanges(tags, runId, { seen: false, todo: false });
+      ops = planTagChanges(tags, runId, null);
       break;
     case "done":
-      ops = planTagChanges(tags, runId, { seen: true, todo: false });
+      ops = planTagChanges(tags, runId, "seen");
       break;
     case "snoozed":
-      return { accepted: true, ops: [{ kind: "open-snooze-menu" }] };
+      if (!canSnooze(thread, { now })) return { accepted: false };
+      ops = [{ kind: "open-snooze-menu" }];
+      break;
     case "settled":
-      return { accepted: true, ops: [...planTagChanges(tags, runId), { kind: "settle" }] };
+      if (
+        thread.hasPendingApprovals ||
+        ["preparing", "starting", "running", "waiting"].includes(thread.latestRun?.status ?? "")
+      )
+        return { accepted: false };
+      ops = [...planTagChanges(tags, runId, currentMark(tags, runId)), { kind: "settle" }];
+      break;
     default:
       return { accepted: false };
   }
 
-  if (current === "settled") ops.push({ kind: "unsettle" });
-  if (effectiveSnoozed(thread, { now })) ops.push({ kind: "unsnooze" });
-  return { accepted: true, ops };
+  if (target === "todo" || target === "review" || target === "done") {
+    if (thread.shelfAvailable !== false && thread.settledOverride === "settled") {
+      ops.push({ kind: "unsettle" });
+    }
+    if (current === "snoozed") ops.push({ kind: "unsnooze" });
+  }
+  return resolveDropResult(thread, tags, ops, now) === target
+    ? { accepted: true, ops }
+    : { accepted: false };
 }
 
 export function planAfterSnooze(
   thread: BoardThread,
   tags: ReadonlyArray<string>,
 ): ReadonlyArray<BoardOp> {
-  const cleanup = planTagChanges(tags, thread.latestRun?.runId ?? null);
-  return thread.settledOverride === "settled" ? [{ kind: "unsettle" }, ...cleanup] : cleanup;
+  const runId = thread.latestRun?.runId ?? null;
+  return planTagChanges(tags, runId, currentMark(tags, runId));
 }
 
 export function canMarkSeen(
@@ -245,7 +309,7 @@ export function planMarkSeen(
 ): ReadonlyArray<BoardOp> {
   const run = thread.latestRun;
   if (run === null || (run.status !== "failed" && !isReviewableRun(run))) return [];
-  return planTagChanges(tags, run.runId, { seen: true });
+  return planTagChanges(tags, run.runId, tags.includes(todoTag(run.runId)) ? "todo" : "seen");
 }
 
 export function planMarkUnseen(
@@ -254,5 +318,5 @@ export function planMarkUnseen(
 ): ReadonlyArray<BoardOp> {
   const run = thread.latestRun;
   if (run?.completedAt == null || !tags.includes(seenTag(run.runId))) return [];
-  return planTagChanges(tags, run.runId, { seen: false });
+  return planTagChanges(tags, run.runId, tags.includes(todoTag(run.runId)) ? "todo" : null);
 }

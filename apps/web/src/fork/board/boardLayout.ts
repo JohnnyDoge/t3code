@@ -23,6 +23,14 @@ export interface BoardColumnLayout {
   readonly width: number;
 }
 
+export function isBoardColumnSlim(
+  collapsed: boolean,
+  count: number,
+  acceptsDrag: boolean,
+): boolean {
+  return collapsed || (count === 0 && !acceptsDrag);
+}
+
 export function clampBoardColumnWidth(width: number): number {
   return Math.round(Math.min(BOARD_COLUMN_WIDTH.max, Math.max(BOARD_COLUMN_WIDTH.min, width)));
 }

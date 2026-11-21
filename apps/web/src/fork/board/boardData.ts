@@ -3,6 +3,7 @@ import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/e
 import { arrayElementsEqual } from "@t3tools/client-runtime/state/entities";
 import {
   isAtomCommandInterrupted,
+  settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
@@ -54,6 +55,24 @@ const failureTitles = {
   unsnooze: msg("Failed to wake thread"),
 };
 
+export async function countFailedBoardMarks<T>(
+  threads: readonly T[],
+  markSeen: (thread: T) => Promise<void>,
+): Promise<number> {
+  let next = 0;
+  const work = async () => {
+    let failures = 0;
+    while (next < threads.length) {
+      const thread = threads[next++]!;
+      const result = await settlePromise(() => markSeen(thread));
+      if (result._tag === "Failure") failures += 1;
+    }
+    return failures;
+  };
+  const failures = await Promise.all(Array.from({ length: Math.min(threads.length, 4) }, work));
+  return failures.reduce((total, count) => total + count, 0);
+}
+
 /**
  * Executes board ops against the thread's own environment, in order.
  * `open-snooze-menu` is not executed here: it is passed to `onOpenSnoozeMenu`.
@@ -63,7 +82,7 @@ const failureTitles = {
 export function useRunBoardOps(): (
   threadRef: ScopedThreadRef,
   ops: ReadonlyArray<BoardOp>,
-  options?: { readonly onOpenSnoozeMenu?: () => void },
+  options?: { readonly onOpenSnoozeMenu?: () => void; readonly reportFailure?: boolean },
 ) => Promise<void> {
   const setTag = useOrchestrationCommand(threadEnvironment.setTag, { reportFailure: false });
   const { settleThread, unsettleThread, unsnoozeThread } = useThreadActions();
@@ -81,7 +100,7 @@ export function useRunBoardOps(): (
         : actions[op.kind](threadRef));
       if (result._tag === "Failure") {
         const error = squashAtomCommandFailure(result);
-        if (!isAtomCommandInterrupted(result)) {
+        if (options?.reportFailure !== false && !isAtomCommandInterrupted(result)) {
           toastManager.add(
             stackedThreadToast({
               type: "error",

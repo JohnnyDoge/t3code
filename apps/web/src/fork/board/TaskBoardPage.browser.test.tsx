@@ -34,6 +34,7 @@ vi.mock("../../state/use-orchestration-command", () => ({
 vi.mock("./boardData", () => {
   const tags = () => [];
   return {
+    countFailedBoardMarks: vi.fn(),
     useBoardTagsLookup: () => tags,
     useRunBoardOps: () => mocks.runOps,
   };
@@ -85,23 +86,23 @@ it("offers accepting columns during a drag and executes only their drop plans", 
 it("restores a collapsed column and its resized width after remount", async () => {
   setup();
   await using first = await render(<TaskBoardPage />, { router: "/board" });
-  const firstHandle = first.getByRole("separator", { name: "Resize To do" });
+  const firstHandle = first.getByRole("separator", { name: "Resize Done" });
   await act(() => (firstHandle.element() as HTMLElement).focus());
   await userEvent.keyboard("{ArrowRight}");
   const width = BOARD_COLUMN_WIDTH.default + 16;
   await expect.element(firstHandle).toHaveAttribute("aria-valuenow", String(width));
-  await first.getByRole("button", { name: "Collapse To do" }).click();
+  await first.getByRole("button", { name: "Collapse Done" }).click();
   await first.unmount();
 
   await using second = await render(<TaskBoardPage />, { router: "/board" });
-  const expand = second.getByRole("button", { name: "Expand To do" });
+  const expand = second.getByRole("button", { name: "Expand Done" });
   await expect.element(expand).toHaveAttribute("aria-expanded", "false");
   await expand.click();
-  const restoredHandle = second.getByRole("separator", { name: "Resize To do" });
+  const restoredHandle = second.getByRole("separator", { name: "Resize Done" });
   await expect.element(restoredHandle).toHaveAttribute("aria-valuenow", String(width));
-  expect(
-    second.getByRole("region", { name: "To do" }).element().getBoundingClientRect().width,
-  ).toBe(width);
+  expect(second.getByRole("region", { name: "Done" }).element().getBoundingClientRect().width).toBe(
+    width,
+  );
   await userEvent.dblClick(restoredHandle);
   await expect
     .element(restoredHandle)

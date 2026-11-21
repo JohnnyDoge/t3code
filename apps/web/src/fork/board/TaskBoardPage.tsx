@@ -11,21 +11,26 @@ import { AuthOrchestrationOperateScope, type ContextMenuSource } from "@t3tools/
 import { useGT, useMessages } from "gt-react";
 import { useState, type DragEvent, type MouseEvent } from "react";
 
-import { isTrailingDoubleClick } from "../../components/Sidebar.logic";
-import { pickSnoozePreset, resolveSnoozePresets } from "../../components/Sidebar.snooze";
+import { isTrailingDoubleClick, useSnoozeWakeClock } from "../../components/Sidebar.logic";
 import { WorkspacePageHeader } from "../../components/WorkspacePageHeader";
 import { Button } from "../../components/ui/button";
 import { SidebarInset } from "../../components/ui/sidebar";
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import { contextMenuSourceOf } from "../../contextMenuSource";
 import { isElectron } from "../../env";
-import { useNowMinute } from "../../hooks/useNowMinute";
 import { useClientSettings } from "../../hooks/useSettings";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { isMacPlatform } from "../../lib/utils";
 import { readLocalApi } from "../../localApi";
-import { readThreadShell, useProjects, useQuietThreadShells } from "../../state/entities";
+import {
+  readEnvironmentServerConfigLoaded,
+  readThreadShell,
+  useProjects,
+  useQuietThreadShells,
+  useServerConfigs,
+} from "../../state/entities";
+import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
 import { readEnvironmentScope } from "../../state/session";
 import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
@@ -40,9 +45,12 @@ import {
   groupThreadsByColumn,
   planAfterSnooze,
   planBoardDrop,
+  planMarkSeen,
+  resolveBoardColumn,
   type BoardColumnId,
 } from "./boardModel";
-import { useBoardTagsLookup, useRunBoardOps } from "./boardData";
+import { countFailedBoardMarks, useBoardTagsLookup, useRunBoardOps } from "./boardData";
+import { chooseBoardSnooze } from "./boardSnooze";
 
 const PAGE_SIZE = 50;
 
@@ -54,10 +62,11 @@ export function TaskBoardPage() {
   const gt = useGT();
   const messages = useMessages();
   const router = useRouter();
-  const threads = useQuietThreadShells();
+  const shells = useQuietThreadShells();
+  const serverConfigs = useServerConfigs();
   const projects = useProjects();
   const tagsOf = useBoardTagsLookup();
-  const minute = useNowMinute();
+  const wakeClock = useSnoozeWakeClock(shells);
   const runOps = useRunBoardOps();
   const { snoozeThread } = useThreadActions();
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
@@ -66,16 +75,30 @@ export function TaskBoardPage() {
   });
   const [layout, setLayout] = useState(readBoardLayout);
   const [shown, setShown] = useState<Partial<Record<BoardColumnId, number>>>({});
-  const [draggedKey, setDraggedKey] = useState<string | null>(null);
+  const [drag, setDrag] = useState<{ key: string; startedAt: number } | null>(null);
   const [rename, setRename] = useState<{ key: string; title: string } | null>(null);
+  const [markingAll, setMarkingAll] = useState(false);
+  const settledLayout = layout.find(({ id }) => id === "settled");
+  const olderSettled = useOlderSettledShelf({
+    scopes: [...serverConfigs.keys()].map((environmentId) => ({ environmentId, projectIds: null })),
+    expanded: settledLayout?.collapsed === false,
+    visibleCount: shown.settled ?? 0,
+  });
 
-  const now = `${minute}:00.000Z`;
+  const now = new Date(wakeClock).toISOString();
+  const threads = shells.map((thread) =>
+    serverConfigs.has(thread.environmentId) ? thread : { ...thread, shelfAvailable: false },
+  );
   const groups = groupThreadsByColumn(threads, tagsOf, now);
+  const listedSettled = groups.settled.filter(olderSettled.isListed);
+  useOlderSettledShelfGrowth(olderSettled, listedSettled);
+  const settledCount = groups.settled.length + olderSettled.unloadedCount(shells);
   const projectTitles = new Map(
     projects.map((project) => [`${project.environmentId}:${project.id}`, project.title]),
   );
-  const dragged = draggedKey === null ? undefined : threads.find((t) => cardKey(t) === draggedKey);
-  const empty = BOARD_COLUMNS.every(({ id }) => groups[id].length === 0);
+  const dragged = drag === null ? undefined : threads.find((t) => cardKey(t) === drag.key);
+  const dragTime =
+    drag === null ? now : new Date(Math.max(wakeClock, drag.startedAt)).toISOString();
 
   function reportFailure(result: AtomCommandResult<unknown, unknown>, title: string) {
     if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
@@ -98,25 +121,17 @@ export function TaskBoardPage() {
     const api = readLocalApi();
     const ref = scopeThreadRef(thread.environmentId, thread.id);
     if (!api || !readEnvironmentScope(ref.environmentId, AuthOrchestrationOperateScope)) return;
-    const presets = resolveSnoozePresets(new Date(), timestampFormat, ref.environmentId, messages);
-    const clicked = await settlePromise(() =>
-      api.contextMenu.show(
-        presets.map((preset) => ({ id: preset.id, label: preset.label, detail: preset.whenLabel })),
-        position,
-        source,
+    const choice = await settlePromise(() =>
+      chooseBoardSnooze(
+        (items) => api.contextMenu.show(items, position, source),
+        timestampFormat,
+        ref.environmentId,
+        messages,
       ),
     );
-    if (clicked._tag === "Failure" || clicked.value === null) return;
-    const preset = pickSnoozePreset(
-      presets,
-      clicked.value,
-      timestampFormat,
-      ref.environmentId,
-      messages,
-    );
-    if (!preset) return;
+    if (choice._tag !== "Success" || !choice.value) return;
 
-    const result = await snoozeThread(ref, preset.snoozedUntil);
+    const result = await snoozeThread(ref, choice.value.snoozedUntil);
     if (result._tag !== "Success") {
       reportFailure(result, gt("Failed to snooze thread"));
       return;
@@ -125,6 +140,54 @@ export function TaskBoardPage() {
     if (current) {
       await runOps(ref, planAfterSnooze(current, tagsOf(current))).catch(() => {});
     }
+  }
+
+  async function markAllSeen() {
+    const api = readLocalApi();
+    const review = groups.review;
+    if (!api || markingAll || review.length === 0) return;
+    setMarkingAll(true);
+    const confirmed = await settlePromise(() =>
+      api.dialogs.confirm(
+        gt(
+          "{count, plural, one {Mark {count} thread in Review as seen?} other {Mark {count} threads in Review as seen?}}",
+          { count: review.length },
+        ),
+      ),
+    );
+    if (confirmed._tag === "Success" && confirmed.value) {
+      // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
+      const confirmedAt = new Date().toISOString();
+      const count = await countFailedBoardMarks(review, async (thread) => {
+        const ref = scopeThreadRef(thread.environmentId, thread.id);
+        const current = readThreadShell(ref);
+        if (!current) throw new Error("Thread is unavailable");
+        const tags = tagsOf(current);
+        const boardThread = readEnvironmentServerConfigLoaded(ref.environmentId)
+          ? current
+          : { ...current, shelfAvailable: false };
+        if (
+          current.latestRun?.runId !== thread.latestRun?.runId ||
+          resolveBoardColumn(boardThread, tags, confirmedAt) !== "review"
+        )
+          return;
+        await runOps(ref, planMarkSeen(current, tags), { reportFailure: false });
+      });
+      if (count > 0) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: gt(
+              "{count, plural, one {Failed to mark {count} thread as seen} other {Failed to mark {count} threads as seen}}",
+              { count },
+            ),
+          }),
+        );
+      }
+    } else {
+      reportFailure(confirmed, gt("Failed to confirm marking threads as seen"));
+    }
+    setMarkingAll(false);
   }
 
   const moveThread = useStableCallback(
@@ -136,6 +199,7 @@ export function TaskBoardPage() {
     ) => {
       const thread = threads.find((candidate) => cardKey(candidate) === key);
       if (!thread || !columnsById.get(target)?.acceptsDrops) return;
+      // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
       const plan = planBoardDrop(thread, tagsOf(thread), target, new Date().toISOString());
       if (!plan.accepted) return;
       const ref = scopeThreadRef(thread.environmentId, thread.id);
@@ -190,7 +254,7 @@ export function TaskBoardPage() {
         const projectKeys = layout.flatMap(({ id, collapsed }) =>
           collapsed
             ? []
-            : groups[id]
+            : (id === "settled" ? listedSettled : groups[id])
                 .slice(0, shown[id] ?? PAGE_SIZE)
                 .filter(
                   (candidate) =>
@@ -230,8 +294,8 @@ export function TaskBoardPage() {
 
   const cardActions: BoardCardActions = {
     onOpen: openThread,
-    onStartDrag: setDraggedKey,
-    onEndDrag: () => setDraggedKey(null),
+    onStartDrag: (key) => setDrag({ key, startedAt: Date.now() }),
+    onEndDrag: () => setDrag(null),
     onOpenMoveMenu: openMoveMenu,
     onStartRename: (key, title) => setRename({ key, title }),
     onCommitRename: (thread, title, original) => void commitRename(thread, title, original),
@@ -252,12 +316,12 @@ export function TaskBoardPage() {
     updateColumn(id, { width }),
   );
   const dropThread = useStableCallback((id: BoardColumnId, event: DragEvent<HTMLElement>) => {
-    if (draggedKey === null || event.dataTransfer.getData(BOARD_THREAD_DRAG_TYPE) !== draggedKey) {
+    if (drag === null || event.dataTransfer.getData(BOARD_THREAD_DRAG_TYPE) !== drag.key) {
       return;
     }
     event.preventDefault();
-    setDraggedKey(null);
-    moveThread(draggedKey, id, { x: event.clientX, y: event.clientY }, "mouse");
+    setDrag(null);
+    moveThread(drag.key, id, { x: event.clientX, y: event.clientY }, "mouse");
   });
 
   return (
@@ -265,78 +329,87 @@ export function TaskBoardPage() {
       <WorkspacePageHeader electron={isElectron} className="border-b border-border/70">
         <h1 className="text-base font-semibold">{gt("Task board")}</h1>
       </WorkspacePageHeader>
-      {empty ? (
-        <p className="grid min-h-0 flex-1 place-items-center p-4 text-sm text-muted-foreground">
-          {gt("No threads to show on the board.")}
-        </p>
-      ) : (
-        <div data-history-swipe="off" className="min-h-0 flex-1 overflow-x-auto overscroll-x-none">
-          <div className="flex h-full min-w-max gap-3 p-3">
-            {layout.map((column) => {
-              const { id } = column;
-              const definition = columnsById.get(id);
-              const items = groups[id];
-              const limit = shown[id] ?? PAGE_SIZE;
-              const acceptsDrag =
-                dragged !== undefined &&
-                definition?.acceptsDrops === true &&
-                !items.includes(dragged) &&
-                planBoardDrop(dragged, tagsOf(dragged), id, now).accepted;
-              return (
-                <BoardColumn
-                  key={id}
-                  label={definition?.label ?? id}
-                  layout={column}
-                  count={items.length}
-                  acceptsDrag={acceptsDrag}
-                  onToggleCollapsed={toggleCollapsed}
-                  onResize={resizeColumn}
-                  onDropThread={dropThread}
-                >
-                  {column.collapsed ? null : (
-                    <div className="flex flex-col gap-2">
-                      {items.length === 0 ? (
-                        <p className="px-2 py-3 text-xs text-muted-foreground">
-                          {gt("No threads")}
-                        </p>
-                      ) : null}
-                      {items.slice(0, limit).map((thread) => {
-                        const key = cardKey(thread);
-                        return (
-                          <BoardCard
-                            key={key}
-                            thread={thread}
-                            column={id}
-                            projectTitle={projectTitles.get(
-                              `${thread.environmentId}:${thread.projectId}`,
-                            )}
-                            actions={cardActions}
-                            renameTitle={rename?.key === key ? rename.title : null}
-                          />
-                        );
-                      })}
-                      {items.length > limit ? (
-                        <Button
-                          variant="ghost-muted"
-                          size="compact"
-                          onClick={() =>
-                            setShown((current) => ({
-                              ...current,
-                              [id]: (current[id] ?? PAGE_SIZE) + PAGE_SIZE,
-                            }))
-                          }
-                        >
-                          {gt("Show more")}
-                        </Button>
-                      ) : null}
-                    </div>
-                  )}
-                </BoardColumn>
-              );
-            })}
-          </div>
+      <div data-history-swipe="off" className="min-h-0 flex-1 overflow-x-auto overscroll-x-none">
+        <div className="flex h-full min-w-max gap-3 p-3">
+          {layout.map((column) => {
+            const { id } = column;
+            const definition = columnsById.get(id);
+            const items = id === "settled" ? listedSettled : groups[id];
+            const count = id === "settled" ? settledCount : items.length;
+            const limit = shown[id] ?? PAGE_SIZE;
+            const settledLoading = id === "settled" && olderSettled.loading;
+            const settledFailed = id === "settled" && olderSettled.failed;
+            const displayedCount = Math.min(items.length, limit);
+            const showMore = count > displayedCount || settledLoading || settledFailed;
+            const acceptsDrag =
+              dragged !== undefined &&
+              definition?.acceptsDrops === true &&
+              !groups[id].includes(dragged) &&
+              planBoardDrop(dragged, tagsOf(dragged), id, dragTime).accepted;
+            return (
+              <BoardColumn
+                key={id}
+                label={definition?.label ?? id}
+                layout={column}
+                count={count}
+                acceptsDrag={acceptsDrag}
+                headerAction={
+                  id === "review" && count > 0 ? (
+                    <Button
+                      variant="ghost-muted"
+                      size="compact"
+                      disabled={markingAll}
+                      onClick={() => void markAllSeen()}
+                    >
+                      {gt("Mark all as seen")}
+                    </Button>
+                  ) : null
+                }
+                onToggleCollapsed={toggleCollapsed}
+                onResize={resizeColumn}
+                onDropThread={dropThread}
+              >
+                {column.collapsed ? null : (
+                  <div className="flex flex-col gap-2">
+                    {items.slice(0, limit).map((thread) => {
+                      const key = cardKey(thread);
+                      return (
+                        <BoardCard
+                          key={key}
+                          thread={thread}
+                          column={id}
+                          projectTitle={projectTitles.get(
+                            `${thread.environmentId}:${thread.projectId}`,
+                          )}
+                          actions={cardActions}
+                          renameTitle={rename?.key === key ? rename.title : null}
+                        />
+                      );
+                    })}
+                    {showMore ? (
+                      <Button
+                        variant="ghost-muted"
+                        size="compact"
+                        disabled={settledLoading}
+                        onClick={() => {
+                          if (settledFailed) olderSettled.retry();
+                          else setShown({ ...shown, [id]: displayedCount + PAGE_SIZE });
+                        }}
+                      >
+                        {settledFailed
+                          ? gt("Retry")
+                          : settledLoading
+                            ? gt("Loading…")
+                            : gt("Show more")}
+                      </Button>
+                    ) : null}
+                  </div>
+                )}
+              </BoardColumn>
+            );
+          })}
         </div>
-      )}
+      </div>
     </SidebarInset>
   );
 }

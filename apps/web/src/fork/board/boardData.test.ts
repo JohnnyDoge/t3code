@@ -8,7 +8,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vite-plus/test";
 
 import { toastManager } from "../../components/ui/toast";
-import { useBoardTagsLookup, useRunBoardOps, useThreadBoardTags } from "./boardData";
+import {
+  countFailedBoardMarks,
+  useBoardTagsLookup,
+  useRunBoardOps,
+  useThreadBoardTags,
+} from "./boardData";
 
 const { setTag, settle, unsettle, unsnooze } = vi.hoisted(() => ({
   setTag: vi.fn(),
@@ -114,4 +119,21 @@ it("waits for acceptance before continuing and stops on the first failure", asyn
   expect(toastManager.add).toHaveBeenCalledWith(
     expect.objectContaining({ type: "error", title: "Failed to wake thread" }),
   );
+});
+
+it("marks at most four threads at a time and continues after a failure", async () => {
+  const attempts = Array.from({ length: 5 }, () => Promise.withResolvers<void>());
+  const lastStarted = Promise.withResolvers<void>();
+  const markSeen = vi.fn((index: number) => {
+    if (index === 4) lastStarted.resolve();
+    return attempts[index]!.promise;
+  });
+  const count = countFailedBoardMarks([0, 1, 2, 3, 4], markSeen);
+
+  expect(markSeen.mock.calls).toEqual([[0], [1], [2], [3]]);
+  attempts[0]!.reject(new Error("The environment disconnected"));
+  await lastStarted.promise;
+  expect(markSeen).toHaveBeenLastCalledWith(4);
+  for (const attempt of attempts.slice(1)) attempt.resolve();
+  await expect(count).resolves.toBe(1);
 });
