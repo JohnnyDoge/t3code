@@ -24,7 +24,10 @@ if git -C "$checkout" diff --cached --quiet; then
   exit 0
 fi
 
-git -C "$checkout" commit -m 'chore(release): sync desktop release workflow'
+# The temporary clone has no repo config; reuse the fork checkout's identity.
+git -C "$checkout" -c "user.name=$(git -C "$root_dir" config user.name)" \
+  -c "user.email=$(git -C "$root_dir" config user.email)" \
+  commit -m 'chore(release): sync desktop release workflow'
 sha=$(git -C "$checkout" rev-parse HEAD)
 git -C "$checkout" push --no-follow-tags origin "HEAD:refs/heads/$branch"
 printf 'release-repo pushed %s\n' "$sha"
