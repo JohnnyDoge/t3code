@@ -76,11 +76,11 @@ reserved prefix `kb:` and must stay invisible in any UI.
 
 ### 2.2 Board tags
 
-| Tag | Meaning |
-|---|---|
-| `kb:seen:<runId>` | The owner has looked at the result of run `<runId>`. |
+| Tag               | Meaning                                                                  |
+| ----------------- | ------------------------------------------------------------------------ |
+| `kb:seen:<runId>` | The owner has looked at the result of run `<runId>`.                     |
 | `kb:todo:<runId>` | The owner placed the thread in To do while its latest run was `<runId>`. |
-| `kb:todo:none` | Same, for a thread that has no run yet. |
+| `kb:todo:none`    | Same, for a thread that has no run yet.                                  |
 
 `<runId>` is `thread.latestRun.runId`. Marks are **scoped to a run**: when a new run
 starts, marks for the previous run stop applying without anyone deleting them. This is
@@ -107,7 +107,7 @@ column. Evaluate top to bottom; the first match wins:
 4. Let `s = resolveSidebarThreadStatus(thread)` (the raw status, before the sidebar's
    "visited failure reads as ready" downgrade):
    - `approval`, `input`, `request`, `limited`: **Needs you**
-   - `failed`: **Failed**, unless the failure is a failed latest run *and*
+   - `failed`: **Failed**, unless the failure is a failed latest run _and_
      `kb:seen:<latestRunId>` is present, then **Done**. (A runtime failure without a
      failed run has nothing to scope a mark to and stays Failed, like upstream.)
    - `preparing`, `working`: **Working**
@@ -124,17 +124,17 @@ for Review or Failed; only `kb:seen:*` is.
 
 ### 2.4 Columns, left to right
 
-| id | Label | Accepts drops | Default |
-|---|---|---|---|
-| `todo` | To do | yes | expanded |
-| `working` | Working | no | expanded |
-| `waiting` | Waiting | no | expanded |
-| `needs-you` | Needs you | no | expanded |
-| `failed` | Failed | no | expanded |
-| `review` | Review | yes | expanded |
-| `done` | Done | yes | expanded |
-| `snoozed` | Snoozed | yes | collapsed |
-| `settled` | Settled | yes | collapsed |
+| id          | Label     | Accepts drops | Default   |
+| ----------- | --------- | ------------- | --------- |
+| `todo`      | To do     | yes           | expanded  |
+| `working`   | Working   | no            | expanded  |
+| `waiting`   | Waiting   | no            | expanded  |
+| `needs-you` | Needs you | no            | expanded  |
+| `failed`    | Failed    | no            | expanded  |
+| `review`    | Review    | yes           | expanded  |
+| `done`      | Done      | yes           | expanded  |
+| `snoozed`   | Snoozed   | yes           | collapsed |
+| `settled`   | Settled   | yes           | collapsed |
 
 Within a column: pinned threads first, then most recently updated first.
 
@@ -257,6 +257,6 @@ alone.
 
 ## 6. Seam registry (upstream files touched by the fork)
 
-| Upstream file | Seam | Why |
-|---|---|---|
-| _(add a row per seam)_ | | |
+| Upstream file          | Seam | Why |
+| ---------------------- | ---- | --- |
+| _(add a row per seam)_ |      |     |
