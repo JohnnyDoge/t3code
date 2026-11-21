@@ -6,7 +6,7 @@ lock=
 # shellcheck disable=SC2329 # Invoked by the EXIT trap.
 finish() {
   if [[ -n $lock ]]; then
-    rm -f -- "$lock/conflicts" "$lock/upstream-base.sh"
+    rm -f -- "$lock/conflicts" "$lock/plan" "$lock/upstream-base.sh"
     rmdir "$lock" || true
   fi
   printf '%s\n' "$report"
@@ -42,43 +42,70 @@ require_linear() {
   [[ -z $merges ]] || stop 'error fork history contains merge commits since the upstream base'
 }
 
-fetch_target() {
-  local advertised sha ref tag accepted='' target_ref accepted_ref
+fetch_plan() {
+  local advertised sha ref tag previous_sha=$base_sha previous_tag=$base_tag step
   local private_refs=refs/fork-upstream
+  local refspecs=("+refs/heads/main:$private_refs/main")
+  local accepted=false
+  tags=()
+  shas=()
   report='error read upstream nightly tags'
-  advertised=$(git ls-remote --refs --tags --sort=-version:refname upstream 'refs/tags/v*-nightly.*')
-  target_tag=
+  advertised=$(git ls-remote --refs --tags --sort=version:refname upstream 'refs/tags/v*-nightly.*')
   while read -r sha ref; do
     [[ -n $ref ]] || continue
     tag=${ref#refs/tags/}
     [[ $tag =~ $nightly_pattern && $sha =~ $sha_pattern ]] || stop "error invalid upstream nightly tag $tag"
-    if [[ -z $target_tag ]]; then
-      target_tag=$tag
-      target_sha=$sha
-    fi
     if [[ $tag == "$base_tag" ]]; then
-      accepted=$sha
+      [[ $sha == "$base_sha" ]] || stop "error accepted upstream tag $base_tag moved from $base_sha to $sha"
+      accepted=true
+    fi
+    if "$accepted"; then
+      tags+=("$tag")
+      shas+=("$sha")
+      refspecs+=("+$ref:$private_refs/tags/$tag")
     fi
   done <<< "$advertised"
-  [[ -n $accepted ]] || stop "error accepted upstream tag $base_tag was deleted"
-  [[ $accepted == "$base_sha" ]] || stop "error accepted upstream tag $base_tag moved from $base_sha to $accepted"
-
-  target_ref="$private_refs/tags/$target_tag"
-  accepted_ref="$private_refs/tags/$base_tag"
-  local refspecs=("+refs/heads/main:$private_refs/main" "+refs/tags/$target_tag:$target_ref")
-  if [[ $target_tag != "$base_tag" ]]; then
-    refspecs+=("+refs/tags/$base_tag:$accepted_ref")
-  fi
+  "$accepted" || stop "error accepted upstream tag $base_tag was deleted"
   report='error fetch upstream main and nightly tags'
   git fetch --atomic --no-tags upstream "${refspecs[@]}"
-  [[ $(git rev-parse "$target_ref") == "$target_sha" && $(git rev-parse "$accepted_ref") == "$base_sha" ]] ||
-    stop 'error upstream tags changed during fetch'
-  git merge-base --is-ancestor "$target_sha" "$private_refs/main" ||
-    stop "error upstream tag $target_tag is outside upstream main"
-  git merge-base --is-ancestor "$base_sha" "$target_sha" ||
-    stop "error upstream tag $target_tag regressed from $base_tag"
-  report="error upstream route check for $target_tag"
-  bash scripts/fork/check-routes.sh --upstream "$target_sha"
+  for step in "${!tags[@]}"; do
+    tag=${tags[step]}
+    sha=${shas[step]}
+    [[ $(git rev-parse "$private_refs/tags/$tag") == "$sha" ]] ||
+      stop "error upstream tag $tag changed during fetch"
+    git merge-base --is-ancestor "$sha" "$private_refs/main" ||
+      stop "error upstream tag $tag is outside upstream main"
+    git merge-base --is-ancestor "$previous_sha" "$sha" ||
+      stop "error upstream tag $tag regressed from $previous_tag"
+    report="error upstream route check for $tag"
+    bash scripts/fork/check-routes.sh --upstream "$sha"
+    previous_sha=$sha
+    previous_tag=$tag
+  done
+}
+
+save_plan() {
+  local step
+  printf '%s %s\n' "$original" "$lease"
+  for step in "${!tags[@]}"; do
+    printf '%s %s\n' "${tags[step]}" "${shas[step]}"
+  done
+}
+
+load_plan() {
+  local tag sha extra
+  read -r original lease extra
+  [[ $original =~ $sha_pattern && $lease =~ $sha_pattern && -z $extra ]] ||
+    stop 'error invalid pending sync state'
+  tags=()
+  shas=()
+  while read -r tag sha extra; do
+    [[ $tag =~ $nightly_pattern && $sha =~ $sha_pattern && -z $extra ]] ||
+      stop 'error invalid pending sync state'
+    tags+=("$tag")
+    shas+=("$sha")
+  done
+  [[ ${#tags[@]} -gt 0 ]] || stop 'error empty pending sync plan'
 }
 
 is_rebasing() {
@@ -108,7 +135,7 @@ continue_rebase() {
     git -c rerere.enabled=true -c rerere.autoupdate=true rerere
     conflicts=$(git diff --name-only --diff-filter=U)
     if [[ -n $conflicts ]]; then
-      stop "conflict ${conflicts//$'\n'/ }"
+      stop "conflict $target_tag ${conflicts//$'\n'/ }"
     fi
     if run_rebase --continue; then
       break
@@ -118,20 +145,23 @@ continue_rebase() {
 }
 
 prepare_candidate() {
+  check "generate-routes $target_tag" bash scripts/fork/check-routes.sh --generate
   report='error restore upstream translations'
   local translations=':(glob)apps/*/src/i18n/translations/*.json'
   if ! git diff --quiet "$target_sha" HEAD -- "$translations"; then
     git restore --source="$target_sha" --staged --worktree -- "$translations"
   fi
 
-  report='check-failed generate-routes'
-  bash scripts/fork/check-routes.sh --generate
   printf '%s %s\n' "$target_tag" "$target_sha" > "$base_file"
   git add -- "$base_file" "$route_tree"
-  if ! git diff --cached --quiet; then
-    report='error commit upstream base and regenerated route tree'
-    git -c core.hooksPath=/dev/null commit -m "chore(fork): sync with upstream $target_tag"
+  report='error commit upstream base and regenerated route tree'
+  local commit_args=(-m "chore(fork): sync with upstream $target_tag")
+  # Replace this run's previous bookkeeping commit when it is still at the tip.
+  if [[ $base_tag != "${tags[0]}" &&
+        $(git log -1 --format=%s) == "chore(fork): sync with upstream $base_tag" ]]; then
+    commit_args+=(--amend)
   fi
+  git -c core.hooksPath=/dev/null commit "${commit_args[@]}"
 }
 
 check() {
@@ -163,6 +193,69 @@ run_checks() {
   fi
 }
 
+install_dependencies() {
+  if [[ -z $installed_for ]] ||
+    ! git diff --quiet "$installed_for" HEAD -- ':(glob)**/package.json' pnpm-lock.yaml pnpm-workspace.yaml .npmrc; then
+    check "dependencies $target_tag" vp i
+    installed_for=$(git rev-parse HEAD)
+  fi
+}
+
+advance_candidate() {
+  local step current=-1 next installed_for='' onto
+  report='error read upstream base on candidate'
+  read_upstream_base "$candidate"
+  for step in "${!tags[@]}"; do
+    if [[ $base_tag == "${tags[step]}" && $base_sha == "${shas[step]}" ]]; then
+      current=$step
+      break
+    fi
+  done
+  ((current >= 0)) || stop 'error candidate base is outside the pending sync plan'
+  next=$((current + 1))
+  if ! is_rebasing && ((current > 0)); then
+    # A failed install or generation can leave HEAD rebased with the prior base record.
+    if ((next == ${#tags[@]})) ||
+      git merge-base --is-ancestor "${shas[next]}" "$base_sha" ||
+      ! git merge-base --is-ancestor "${shas[next]}" HEAD; then
+      check "seams $base_tag" bash scripts/fork/check-seams.sh
+    fi
+  fi
+  if is_rebasing && ((next == ${#tags[@]})); then
+    stop 'error unexpected rebase after the last sync step'
+  fi
+
+  for ((step = next; step < ${#tags[@]}; step++)); do
+    target_tag=${tags[step]}
+    target_sha=${shas[step]}
+    printf 'Syncing %s onto %s\n' "$base_tag" "$target_tag" >&2
+    if is_rebasing; then
+      require_linear "$base_sha" "$candidate"
+      onto=$(git rev-parse "$target_sha^{commit}")
+      [[ $(cat "$rebase_dir/onto") == "$onto" ]] || stop "error rebase target does not match $target_tag"
+      continue_rebase
+    elif ! git merge-base --is-ancestor "$target_sha" HEAD; then
+      require_linear "$base_sha" HEAD
+      report="error rebase onto $target_tag"
+      if ! run_rebase --merge --no-autostash --no-update-refs --empty=drop --onto "$target_sha" "$base_sha"; then
+        is_rebasing || exit 1
+        continue_rebase
+      fi
+    fi
+    require_clean
+    require_linear "$target_sha" HEAD
+    install_dependencies
+    require_clean
+    prepare_candidate
+    check "seams $target_tag" bash scripts/fork/check-seams.sh
+    base_tag=$target_tag
+    base_sha=$target_sha
+  done
+  target_tag=$base_tag
+  target_sha=$base_sha
+  install_dependencies
+}
+
 return_to_main() {
   git switch main
   git branch -D "$candidate"
@@ -172,7 +265,8 @@ return_to_main() {
 main() {
   cd "$(git rev-parse --show-toplevel)"
   local state rebase_dir original lease target_tag target_sha candidate base_tag base_sha
-  local mode=${1:-} head belongs_to_sync=false
+  local mode=${1:-} head operation
+  local -a tags shas
   state=$(git rev-parse --git-path fork-sync-state)
   rebase_dir=$(git rev-parse --git-path rebase-merge)
   head=$(git symbolic-ref --quiet --short HEAD || true)
@@ -207,39 +301,30 @@ main() {
       lease=$(git rev-parse FETCH_HEAD)
       git merge-base --is-ancestor "$lease" "$original" ||
         stop 'error origin main has commits absent from local main'
-      fetch_target
-      candidate="sync/$target_tag"
+      fetch_plan
+      candidate="sync/${tags[${#tags[@]} - 1]}"
+      save_plan > "$lock/plan"
       report="error create candidate branch $candidate"
       git switch -c "$candidate"
-      printf '%s %s %s %s\n' "$original" "$lease" "$target_tag" "$target_sha" > "$state"
-      if [[ $target_sha != "$base_sha" ]]; then
-        report="error rebase onto $target_tag"
-        if ! run_rebase --no-autostash --no-update-refs --empty=drop --onto "$target_sha" "$base_sha"; then
-          is_rebasing || exit 1
-          continue_rebase
-        fi
-      fi
+      mv -- "$lock/plan" "$state"
       ;;
     --resume|--abort)
       report='error read pending sync state'
       [[ -f $state ]] || stop 'error no pending sync'
-      read -r original lease target_tag target_sha < "$state"
-      [[ $original =~ $sha_pattern && $lease =~ $sha_pattern &&
-         $target_tag =~ $nightly_pattern && $target_sha =~ $sha_pattern ]] || stop 'error invalid pending sync state'
-      candidate="sync/$target_tag"
+      load_plan < "$state"
+      candidate="sync/${tags[${#tags[@]} - 1]}"
       [[ $(git rev-parse refs/heads/main) == "$original" ]] || stop 'error local main changed during sync'
-      if is_rebasing && [[ $(cat "$rebase_dir/head-name") == "refs/heads/$candidate" ]]; then
-        belongs_to_sync=true
-      fi
-      if "$belongs_to_sync"; then
+      if is_rebasing; then
+        [[ $(cat "$rebase_dir/head-name") == "refs/heads/$candidate" ]] || stop "error expected a rebase of $candidate"
         if [[ $mode == --abort ]]; then
           report='error abort rebase'
           run_rebase --abort
-        else
-          continue_rebase
         fi
       else
         [[ $head == "$candidate" ]] || stop "error expected to be on $candidate"
+        for operation in rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD sequencer; do
+          [[ ! -e $(git rev-parse --git-path "$operation") ]] || stop "error Git operation in progress: $operation"
+        done
         require_clean
       fi
       if [[ $mode == --abort ]]; then
@@ -251,14 +336,8 @@ main() {
     *) stop 'error expected no arguments, --resume or --abort' ;;
   esac
 
-  require_clean
+  advance_candidate
   require_linear "$target_sha" HEAD
-  check dependencies vp i
-  report='error read upstream base on candidate'
-  read_upstream_base
-  if [[ $base_sha != "$target_sha" || $base_tag != "$target_tag" ]]; then
-    prepare_candidate
-  fi
   run_checks
 
   report='error finalize sync'

@@ -240,13 +240,14 @@ alone.
 - **History is linear**: `main` is the upstream nightly tag plus the fork's own non-merge
   commits. Never merge into `main`; integrate branches by rebasing them onto `main` and
   fast-forwarding.
-- **Daily sync by an agent on the Mac mini**, not on GitHub: a T3 scheduled task runs
-  `scripts/fork/sync-upstream.sh` on the owner's Mac mini. A clean rebase that passes the
-  checks is pushed with the owner's local git credentials. On a conflict or a failing
-  check, the agent resolves it by following `docs/fork/SYNC_AGENT.md`, reruns the checks,
-  and pushes; if it cannot, it pushes nothing and leaves a clear report. When the push
-  changes the release repository's files, the sync publishes them with
-  `scripts/fork/publish-release-repo.sh` and the same local Git credentials.
+- **Weekly sync by an agent on the Mac mini**, Saturdays at 07:30 local time before the
+  Sunday release. A T3 scheduled task runs `scripts/fork/sync-upstream.sh`, which rebases
+  the fork onto each upstream nightly in order. The agent follows `docs/fork/SYNC_AGENT.md`
+  to resolve conflicts and check failures. The sync runs the full checks at the end
+  and pushes once with the owner's local Git credentials if they pass. If it cannot
+  finish, the agent reports the blocker. When the push changes the release repository's
+  files, the sync publishes them with `scripts/fork/publish-release-repo.sh` and the
+  same local Git credentials.
 - **Weekly** release workflow, plus a manual trigger: check out the fork's `main`
   to build macOS arm64 (dmg + zip) and Windows x64 (nsis). The Git tag targets the
   release repository's default branch, and the release notes record the fork commit.

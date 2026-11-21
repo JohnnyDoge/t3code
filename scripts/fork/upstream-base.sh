@@ -8,7 +8,7 @@ route_tree=apps/web/src/routeTree.gen.ts
 
 read_upstream_base() {
   local record
-  record=$(git show "HEAD:$base_file") || return
+  record=$(git show "${1:-HEAD}:$base_file") || return
   read -r base_tag base_sha <<< "$record"
   if [[ ! $base_tag =~ $nightly_pattern || ! $base_sha =~ $sha_pattern ||
         $record != "$base_tag $base_sha" ]]; then

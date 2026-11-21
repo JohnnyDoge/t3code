@@ -26,7 +26,7 @@
    permission to update the release repository's workflow and force-update the code fork's
    `main` with a lease. Push the fork's `main` without tags. If an earlier push copied upstream
    tags into the code fork, compare them with upstream's tags and remove the copied tags from
-   the code fork. The daily sync fetches upstream tags into `refs/fork-upstream/` and pushes only
+   the code fork. The weekly sync fetches upstream tags into `refs/fork-upstream/` and pushes only
    `main`.
 5. From the fork checkout on `main`, publish the committed release repository files.
    This replaces the release repository's default-branch tree with `scripts/fork/release-repo/`.
@@ -41,18 +41,23 @@
 Keep a secure backup of that exact PKCS#12 file and its password. A replacement certificate with
 the same common name has a different designated requirement. See [macOS signing](MAC_SIGNING.md).
 
-## Daily sync
+## Weekly sync
 
-Create a daily T3 scheduled task on the Mac mini. Select Codex and the project checkout at
+Schedule the T3 task for Saturdays at 07:30 Mac mini local time before the Sunday
+release. Select Codex and the project checkout at
 `~/.t3/projects/t3-desktop`, use the project root as the working directory, and
-paste [SYNC_AGENT.md](SYNC_AGENT.md) as its instructions. Choose a time when the checkout is usually
-idle. Run the task on demand in T3 to trigger an extra sync. The task's final message reports the
-accepted tag and any conflicts resolved, or the blocker and files involved.
+paste [SYNC_AGENT.md](SYNC_AGENT.md) as its instructions. Run the task on demand in T3
+to trigger an extra sync. The task reports the accepted tag or the blocker, and lists
+each tag where it resolved conflicts and the files involved.
 
-The script requires a clean `main` and takes a lease on the current `origin/main`. It checks a
-candidate on `sync/<tag>`, including when the accepted tag is already current. A conflict leaves
-the rebase in progress. A failed check leaves the candidate checked out. `main` stays at its
-original commit until the checked candidate has been pushed. If that push changes
+The script requires a clean `main` and takes a lease on the current `origin/main`. On
+`sync/<newest-tag>`, it rebases onto each nightly after the accepted tag in version order.
+Each completed step regenerates the route tree and checks the seam registry. The script
+reuses dependencies while the install inputs match and runs the full suite once at
+the end, including when the accepted tag is already current. A conflict leaves the
+rebase in progress at the reported tag. A failed check leaves the candidate checked
+out. Resume continues with the saved tags and lease. `main` stays at its original
+commit until the checked candidate has been pushed. If that push changes
 `scripts/fork/release-repo/`, the script syncs the release repository. A
 `release-repo-failed <tag>` result means the code push succeeded. Rerun
 `bash scripts/fork/publish-release-repo.sh` from `main` after resolving the error.
