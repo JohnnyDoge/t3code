@@ -76,11 +76,11 @@ reserved prefix `kb:` and must stay invisible in any UI.
 
 ### 2.2 Board tags
 
-| Tag               | Meaning                                                                  |
-| ----------------- | ------------------------------------------------------------------------ |
-| `kb:seen:<runId>` | The owner has looked at the result of run `<runId>`.                     |
-| `kb:todo:<runId>` | The owner placed the thread in To do while its latest run was `<runId>`. |
-| `kb:todo:none`    | Same, for a thread that has no run yet.                                  |
+| Tag               | Meaning                                                                                                 |
+| ----------------- | ------------------------------------------------------------------------------------------------------- |
+| `kb:seen:<runId>` | The owner has looked at the result of run `<runId>`.                                                    |
+| `kb:todo:<runId>` | The owner placed the thread in To do while its latest run was `<runId>`. **Implies seen** for that run. |
+| `kb:todo:none`    | Same, for a thread that has no run yet.                                                                 |
 
 `<runId>` is `thread.latestRun.runId`. Marks are **scoped to a run**: when a new run
 starts, marks for the previous run stop applying without anyone deleting them. This is
@@ -89,6 +89,12 @@ thread out of To do once work on it starts.
 
 If `"kb:seen:" + runId` would exceed 64 characters, use a stable short hash of the
 run id instead (document the scheme in code). Check the real run id format first.
+
+A thread's placement for its current run therefore depends on **one** tag at a time: no
+mark (Review), `kb:seen` (Done) or `kb:todo` (To do). Every move adds the new mark
+**before** removing the old one, so a partial failure or two clients writing at once can
+leave both marks but never neither. When both are present, `kb:todo` wins, and the next
+write cleans up.
 
 **Garbage collection**: whenever the board writes a mark for a thread, it also removes
 that thread's stale `kb:seen:*` / `kb:todo:*` tags (ones whose run id is not the
@@ -101,20 +107,22 @@ column. Evaluate top to bottom; the first match wins:
 
 1. Archived thread, or lineage that is not listed (`isListedThreadLineage` false):
    **not on the board**.
-2. `settledOverride === "settled"`: **Settled**.
-3. Effectively snoozed (`effectiveSnoozed(thread, { now })` from client-runtime):
-   **Snoozed**.
-4. Let `s = resolveSidebarThreadStatus(thread)` (the raw status, before the sidebar's
+2. Settled or snoozed **exactly as the Sidebar decides**: reuse the Sidebar's own
+   section resolution (the logic that fills its settled and snoozed shelves, including
+   wake times, which are driven by the existing deadline clock, not a minute tick), so the
+   board, the Sidebar and every menu agree. Snoozed: **Snoozed**. Settled: **Settled**.
+3. Let `s = resolveSidebarThreadStatus(thread)` (the raw status, before the sidebar's
    "visited failure reads as ready" downgrade):
    - `approval`, `input`, `request`, `limited`: **Needs you**
-   - `failed`: **Failed**, unless the failure is a failed latest run _and_
-     `kb:seen:<latestRunId>` is present, then **Done**. (A runtime failure without a
+   - `failed`: **Failed**, unless the failure is a failed latest run carrying a mark:
+     `kb:todo:<latestRunId>` gives **To do**, `kb:seen:<latestRunId>` gives **Done**. (A runtime failure without a
      failed run has nothing to scope a mark to and stays Failed, like upstream.)
    - `preparing`, `working`: **Working**
    - `waiting`: **Waiting**
    - `ready`:
      - latest run completed (`completedAt` set) with a status other than
-       `interrupted` / `cancelled`, and no `kb:seen:<latestRunId>`: **Review**
+       `interrupted` / `cancelled`, and neither `kb:seen:<latestRunId>` nor
+       `kb:todo:<latestRunId>`: **Review**
      - else `kb:todo:<latestRunId or "none">` present: **To do**
      - else: **Done**
 
@@ -152,17 +160,26 @@ type BoardOp =
   | { readonly kind: "open-snooze-menu" };
 ```
 
-- **Drop on To do**: add `kb:todo:<runId|none>`; if the latest run is completed, also add
-  `kb:seen:<runId>` (triaging counts as looking); unsettle if settled; unsnooze if snoozed.
-- **Drop on Review**: remove `kb:seen:<runId>` and any `kb:todo:*`; unsettle / unsnooze.
-  Allowed only when the latest run is completed and not interrupted or cancelled.
-- **Drop on Done**: add `kb:seen:<runId>` when there is a run; remove `kb:todo:*`;
-  unsettle / unsnooze.
-- **Drop on Snoozed**: open the existing snooze preset menu for that thread.
+- **A move is offered only if it works**: the planner applies its ops to the thread's
+  tags and state, resolves the column again, and accepts the move only when the result is
+  the target column. Tests assert the resulting column, not only the op list.
+- **Drop on To do**: add `kb:todo:<runId|none>`, then remove the other current-run mark;
+  unsettle if settled; unsnooze if snoozed.
+- **Drop on Review**: remove `kb:seen:<runId>` and `kb:todo:<runId>`; unsettle / unsnooze.
+- **Drop on Done**: add `kb:seen:<runId>` when there is a run, then remove
+  `kb:todo:<runId>`; unsettle / unsnooze.
+- **Drop on Snoozed**: open the same snooze choices as the thread menu, presets and
+  **Custom…** with its dialog. Snoozing never unsettles; column resolution handles
+  precedence, so upstream's Undo restores the previous state unchanged.
 - **Drop on Settled**: settle.
 - **Drop on Working / Waiting / Needs you / Failed**: rejected, the card returns.
-- **Mark as seen** (context menu, chat header button, keyboard shortcut): add
-  `kb:seen:<runId>`. Shown when the thread is in Review, or in Failed because of a failed run.
+- **Mark as seen** (context menu, chat header button): add `kb:seen:<runId>`. Shown
+  when the thread is in Review, or in Failed because of a failed run. There is no
+  keyboard shortcut: keybinding commands live in `packages/contracts`, which the fork
+  does not change.
+- **Mark all as seen** (Review column header, with a confirmation that states the
+  count): Mark as seen for every thread currently in Review. Needed on first use,
+  when every finished thread starts in Review.
 - **Mark as unseen** (context menu): remove `kb:seen:<runId>`. Shown when the thread
   has a completed run that is marked seen.
 
@@ -193,7 +210,13 @@ alone.
   to…" in the card's menu).
 - **Columns**: collapse or expand from the header, and resize the width. Store this per
   device in localStorage, with a schema-validated, self-repairing saved layout (as in
-  PR #34779). No stacking, vertical split or column reordering in v1.
+  PR #34779). No stacking, vertical split or column reordering in v1. **Empty columns
+  shrink automatically** to a slim rail (label and zero count) and widen again as soon as a
+  card lands. While a drag is in progress, empty columns that accept the card expand, so
+  they stay easy drop targets. Manual collapse still wins.
+- **Settled column is complete**: the server sends only the newest settled threads in the
+  shell snapshot. The Settled column shows the true count and pages older settled threads
+  through the existing older-settled API that the Sidebar shelf uses.
 - **Mark as seen in the chat**: a compact button in the chat header, visible only when
   the open thread is in Review (or in Failed because of a failed run).
 - **Context menu**: "Mark as seen" / "Mark as unseen" entries in the shared thread
@@ -212,18 +235,27 @@ alone.
 - Version format: `<upstream base>-nightly.<YYYYMMDD>.<N>`, because
   `/-nightly\.\d{8}\.\d+$/` selects the nightly channel. Versions must increase on every
   release.
-- **Daily** CI job (`fork-sync`): rebase the fork's commits onto the newest upstream
-  nightly tag, run checks, push. On conflict or failure it opens or updates one issue
-  and pushes nothing.
+- **History is linear**: `main` is the upstream nightly tag plus the fork's own non-merge
+  commits. Never merge into `main`; integrate branches by rebasing them onto `main` and
+  fast-forwarding.
+- **Daily sync by an agent on the Mac mini**, not on GitHub: a T3 scheduled task runs
+  `scripts/fork/sync-upstream.sh` on the owner's Mac mini. A clean rebase that passes the
+  checks is pushed with the owner's local git credentials. On a conflict or a failing
+  check, the agent resolves it by following `docs/fork/SYNC_AGENT.md`, reruns the checks,
+  and pushes; if it cannot, it pushes nothing and leaves a clear report. GitHub holds no
+  push token.
+- **Upstream workflows are removed from the fork** by one fork commit. Upstream edits to
+  those files (modify/delete conflicts) and new upstream workflows are resolved by
+  deleting them during sync, so nothing upstream ever runs in the fork's Actions.
 - **Weekly** CI job (`fork-release`), plus a manual trigger: build macOS arm64
   (dmg + zip) and Windows x64 (nsis), then publish a GitHub prerelease with the
   electron-builder update metadata.
 - macOS: no Apple Developer account. Builds are signed with one **stable self-signed
   code-signing certificate** (stored as CI secrets), so every build has the same
-  designated requirement. Notarization is skipped. Whether Squirrel.Mac accepts updates
-  between two builds signed this way has to be **verified**. If it does not, the
-  in-app "Update" button on macOS must run the fork's own replace-and-relaunch flow
-  instead (code in `apps/desktop/src/fork/`).
+  designated requirement. Notarization is skipped. Squirrel.Mac's check was verified to
+  accept updates between two builds signed this way (`docs/fork/MAC_SIGNING.md`). The
+  certificate lives in `~/.t3-fork-signing/` on the Mac mini and in the fork's CI secrets.
+  Losing it breaks in-app updates on macOS, so the owner keeps a backup.
 - **Build entry point**, the contract between the CI workflow and the packaging code:
   `node scripts/fork/build-desktop.ts --platform <mac|win> --arch <arm64|x64> --version <v> --out <dir>`.
   Environment: `T3CODE_DESKTOP_UPDATE_REPOSITORY` (`owner/repo` of the fork) and, on macOS
