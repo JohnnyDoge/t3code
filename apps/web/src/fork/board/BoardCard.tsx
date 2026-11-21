@@ -4,6 +4,7 @@ import { useGT, useMessages } from "gt-react";
 import { MoveRightIcon } from "lucide-react";
 import { memo, useState, type DragEvent, type MouseEvent } from "react";
 
+import { ProjectFavicon, type ProjectFaviconProject } from "../../components/ProjectFavicon";
 import { resolveThreadStatusPill } from "../../components/Sidebar.logic";
 import { ThreadRenameInput } from "../../components/sidebar/SidebarThreadRow";
 import { Button } from "../../components/ui/button";
@@ -62,13 +63,13 @@ function BoardCardRename(props: {
 export const BoardCard = memo(function BoardCard({
   thread,
   column,
-  projectTitle,
+  project,
   actions,
   renameTitle,
 }: {
   readonly thread: SidebarThreadSummary;
   readonly column: BoardColumnId;
-  readonly projectTitle: string | undefined;
+  readonly project: ProjectFaviconProject | undefined;
   readonly actions: BoardCardActions;
   readonly renameTitle: string | null;
 }) {
@@ -125,9 +126,14 @@ export const BoardCard = memo(function BoardCard({
         <span className="line-clamp-2 w-full pe-7 text-sm leading-snug font-medium" dir="auto">
           {thread.title}
         </span>
-        <span className="flex w-full items-baseline justify-between gap-2 text-xs text-muted-foreground">
-          <span className="truncate">{projectTitle}</span>
-          <span className="shrink-0 tabular-nums">
+        <span className="flex w-full items-center gap-2 text-xs text-muted-foreground">
+          {project ? (
+            <span className="flex min-w-0 items-center gap-1.5">
+              <ProjectFavicon project={project} className="size-4 shrink-0" />
+              <span className="truncate">{project.title}</span>
+            </span>
+          ) : null}
+          <span className="ms-auto shrink-0 tabular-nums">
             <BoardCardTime timestamp={resolveThreadActivityTimestamp(thread)} />
           </span>
         </span>

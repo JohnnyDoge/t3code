@@ -136,8 +136,7 @@ function compareBoardThreads(left: BoardThread, right: BoardThread): number {
 
 export function groupThreadsByColumn<T extends BoardThread>(
   threads: ReadonlyArray<T>,
-  tagsOf: (thread: T) => ReadonlyArray<string>,
-  now: string,
+  resolveColumn: (thread: T) => BoardColumnId | null,
 ): Record<BoardColumnId, T[]> {
   const groups: Record<BoardColumnId, T[]> = {
     todo: [],
@@ -151,7 +150,7 @@ export function groupThreadsByColumn<T extends BoardThread>(
     settled: [],
   };
   for (const thread of threads) {
-    const column = resolveBoardColumn(thread, tagsOf(thread), now);
+    const column = resolveColumn(thread);
     if (column !== null) groups[column].push(thread);
   }
   for (const column of BOARD_COLUMNS) groups[column.id].sort(compareBoardThreads);

@@ -234,8 +234,7 @@ describe("groupThreadsByColumn", () => {
     const toDo = makeBoardThread();
     const groups = groupThreadsByColumn(
       [unpinned, pinnedEarlier, earlier, toDo, pinnedLater, makeBoardThread({ archivedAt: now })],
-      (thread) => (thread === toDo ? [todoTag(null)] : []),
-      now,
+      (thread) => resolveBoardColumn(thread, thread === toDo ? [todoTag(null)] : [], now),
     );
 
     expect(Object.keys(groups)).toEqual(BOARD_COLUMNS.map(({ id }) => id));

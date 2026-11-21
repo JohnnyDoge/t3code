@@ -1,6 +1,7 @@
 import { useRouter } from "@tanstack/react-router";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { selectProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -9,9 +10,14 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { AuthOrchestrationOperateScope, type ContextMenuSource } from "@t3tools/contracts";
 import { useGT, useMessages } from "gt-react";
+import { XIcon } from "lucide-react";
 import { useState, type DragEvent, type MouseEvent } from "react";
 
-import { isTrailingDoubleClick, useSnoozeWakeClock } from "../../components/Sidebar.logic";
+import {
+  filterSidebarV2VisibleThreads,
+  isTrailingDoubleClick,
+  useSnoozeWakeClock,
+} from "../../components/Sidebar.logic";
 import { WorkspacePageHeader } from "../../components/WorkspacePageHeader";
 import { Button } from "../../components/ui/button";
 import { SidebarInset } from "../../components/ui/sidebar";
@@ -19,6 +25,7 @@ import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import { contextMenuSourceOf } from "../../contextMenuSource";
 import { isElectron } from "../../env";
 import { useClientSettings } from "../../hooks/useSettings";
+import { useSidebarProjectGroups } from "../../hooks/useSidebarProjectGroups";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { isMacPlatform } from "../../lib/utils";
@@ -26,6 +33,7 @@ import { readLocalApi } from "../../localApi";
 import {
   readEnvironmentServerConfigLoaded,
   readThreadShell,
+  useDelegatedUnderParent,
   useProjects,
   useQuietThreadShells,
   useServerConfigs,
@@ -37,6 +45,7 @@ import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { useThreadSelectionStore } from "../../threadSelectionStore";
 import type { SidebarThreadSummary } from "../../types";
+import { useUiStateStore } from "../../uiStateStore";
 import { BoardCard, BOARD_THREAD_DRAG_TYPE, type BoardCardActions } from "./BoardCard";
 import { BoardColumn } from "./BoardColumn";
 import { readBoardLayout, saveBoardLayout, type BoardColumnLayout } from "./boardLayout";
@@ -50,6 +59,7 @@ import {
   type BoardColumnId,
 } from "./boardModel";
 import { countFailedBoardMarks, useBoardTagsLookup, useRunBoardOps } from "./boardData";
+import { resolveBoardProjectScope } from "./boardProjectScope";
 import { chooseBoardSnooze } from "./boardSnooze";
 
 const PAGE_SIZE = 50;
@@ -65,8 +75,23 @@ export function TaskBoardPage() {
   const shells = useQuietThreadShells();
   const serverConfigs = useServerConfigs();
   const projects = useProjects();
+  const projectGroups = useSidebarProjectGroups();
+  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const projectScopeKeys = useUiStateStore((store) => store.sidebarProjectScopeKeys);
+  const delegatedUnderParent = useDelegatedUnderParent();
+  const projectScope = resolveBoardProjectScope({
+    groups: projectGroups,
+    settings: projectGroupingSettings,
+    keys: projectScopeKeys,
+    environmentIds: [...serverConfigs.keys()],
+  });
+  const threads = filterSidebarV2VisibleThreads(
+    shells,
+    projectScope.projectKeys,
+    delegatedUnderParent,
+  );
   const tagsOf = useBoardTagsLookup();
-  const wakeClock = useSnoozeWakeClock(shells);
+  const wakeClock = useSnoozeWakeClock(threads);
   const runOps = useRunBoardOps();
   const { snoozeThread } = useThreadActions();
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
@@ -80,22 +105,24 @@ export function TaskBoardPage() {
   const [markingAll, setMarkingAll] = useState(false);
   const settledLayout = layout.find(({ id }) => id === "settled");
   const olderSettled = useOlderSettledShelf({
-    scopes: [...serverConfigs.keys()].map((environmentId) => ({ environmentId, projectIds: null })),
+    scopes: projectScope.olderSettledScopes,
     expanded: settledLayout?.collapsed === false,
-    visibleCount: shown.settled ?? 0,
+    visibleCount: shown.settled ?? PAGE_SIZE,
   });
 
   const now = new Date(wakeClock).toISOString();
-  const threads = shells.map((thread) =>
-    serverConfigs.has(thread.environmentId) ? thread : { ...thread, shelfAvailable: false },
+  const withShelfAvailability = (thread: SidebarThreadSummary) =>
+    serverConfigs.has(thread.environmentId) ? thread : { ...thread, shelfAvailable: false };
+  const groups = groupThreadsByColumn(threads, (thread) =>
+    resolveBoardColumn(withShelfAvailability(thread), tagsOf(thread), now),
   );
-  const groups = groupThreadsByColumn(threads, tagsOf, now);
   const listedSettled = groups.settled.filter(olderSettled.isListed);
   useOlderSettledShelfGrowth(olderSettled, listedSettled);
-  const settledCount = groups.settled.length + olderSettled.unloadedCount(shells);
-  const projectTitles = new Map(
-    projects.map((project) => [`${project.environmentId}:${project.id}`, project.title]),
+  const settledCount = groups.settled.length + olderSettled.unloadedCount(threads);
+  const projectByKey = new Map(
+    projects.map((project) => [`${project.environmentId}:${project.id}`, project]),
   );
+  const projectScopeLabel = projectScope.groups.map((group) => group.displayName).join(", ");
   const dragged = drag === null ? undefined : threads.find((t) => cardKey(t) === drag.key);
   const dragTime =
     drag === null ? now : new Date(Math.max(wakeClock, drag.startedAt)).toISOString();
@@ -199,8 +226,12 @@ export function TaskBoardPage() {
     ) => {
       const thread = threads.find((candidate) => cardKey(candidate) === key);
       if (!thread || !columnsById.get(target)?.acceptsDrops) return;
-      // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
-      const plan = planBoardDrop(thread, tagsOf(thread), target, new Date().toISOString());
+      const plan = planBoardDrop(
+        withShelfAvailability(thread),
+        tagsOf(thread),
+        target,
+        new Date().toISOString(),
+      );
       if (!plan.accepted) return;
       const ref = scopeThreadRef(thread.environmentId, thread.id);
       void runOps(ref, plan.ops, {
@@ -223,9 +254,12 @@ export function TaskBoardPage() {
       const key = cardKey(thread);
       const currentTime = new Date().toISOString();
       const tags = tagsOf(thread);
+      const shelfThread = withShelfAvailability(thread);
       const targets = BOARD_COLUMNS.filter(
         ({ id, acceptsDrops }) =>
-          acceptsDrops && id !== column && planBoardDrop(thread, tags, id, currentTime).accepted,
+          acceptsDrops &&
+          id !== column &&
+          planBoardDrop(shelfThread, tags, id, currentTime).accepted,
       );
       if (targets.length === 0) return;
       const clicked = await settlePromise(() =>
@@ -327,7 +361,26 @@ export function TaskBoardPage() {
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden">
       <WorkspacePageHeader electron={isElectron} className="border-b border-border/70">
-        <h1 className="text-base font-semibold">{gt("Task board")}</h1>
+        <h1 className="shrink-0 text-base font-semibold">{gt("Task board")}</h1>
+        {projectScope.groups.length > 0 ? (
+          <div className="min-w-0 max-w-56 [-webkit-app-region:no-drag]">
+            <Button
+              variant="outline"
+              size="compact"
+              className="max-w-full"
+              aria-label={gt("Clear project filter")}
+              aria-description={projectScopeLabel}
+              title={projectScopeLabel}
+              onClick={() => {
+                useThreadSelectionStore.getState().clearSelection();
+                useUiStateStore.getState().setSidebarProjectScopeKeys([]);
+              }}
+            >
+              <span className="truncate">{projectScopeLabel}</span>
+              <XIcon aria-hidden="true" />
+            </Button>
+          </div>
+        ) : null}
       </WorkspacePageHeader>
       <div data-history-swipe="off" className="min-h-0 flex-1 overflow-x-auto overscroll-x-none">
         <div className="flex h-full min-w-max gap-3 p-3">
@@ -345,7 +398,7 @@ export function TaskBoardPage() {
               dragged !== undefined &&
               definition?.acceptsDrops === true &&
               !groups[id].includes(dragged) &&
-              planBoardDrop(dragged, tagsOf(dragged), id, dragTime).accepted;
+              planBoardDrop(withShelfAvailability(dragged), tagsOf(dragged), id, dragTime).accepted;
             return (
               <BoardColumn
                 key={id}
@@ -378,9 +431,7 @@ export function TaskBoardPage() {
                           key={key}
                           thread={thread}
                           column={id}
-                          projectTitle={projectTitles.get(
-                            `${thread.environmentId}:${thread.projectId}`,
-                          )}
+                          project={projectByKey.get(`${thread.environmentId}:${thread.projectId}`)}
                           actions={cardActions}
                           renameTitle={rename?.key === key ? rename.title : null}
                         />
