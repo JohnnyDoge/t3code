@@ -8,7 +8,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { offeredPromptSuggestion } from "./usePromptSuggestion";
+import { offeredPromptSuggestion, promptSuggestionToAccept } from "./usePromptSuggestion";
 
 const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
 const run = (
@@ -43,6 +43,17 @@ const summary = (value: OrchestrationV2Run) => ({
 });
 
 describe("offeredPromptSuggestion", () => {
+  it("keeps a suggestion while drafting and invalidates it when a new run is queued", () => {
+    const finished = run(RunId.make("finished"), 1, "completed");
+    const suggestion = { runId: finished.id, text: "run the tests" };
+    const offered = offeredPromptSuggestion(suggestion, summary(finished), [finished]);
+    expect(promptSuggestionToAccept(offered?.text ?? null, "my draft")).toBeNull();
+    expect(promptSuggestionToAccept(offered?.text ?? null, "")).toBe(suggestion.text);
+
+    const queued = run(RunId.make("queued"), 2, "queued", false);
+    expect(offeredPromptSuggestion(suggestion, summary(queued), [finished, queued])).toBeNull();
+  });
+
   it("offers the finished turn's suggestion after a queued message was promoted to Steer", () => {
     const turn = run(RunId.make("run-1"), 1, "completed");
     const steered = run(RunId.make("run-2"), 2, "cancelled", false);

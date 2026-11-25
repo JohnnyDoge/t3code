@@ -344,12 +344,15 @@ const resumed = (
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly fileSystem?: FileSystem.FileSystem;
     readonly onPrompt?: (input: unknown) => void;
+    readonly catalog?: unknown;
+    readonly promptSuggestions?: boolean;
   },
 ) =>
   Effect.gen(function* () {
     const runtime = yield* openCode2ReplayRuntime(
       [
-        ...opening,
+        ...opening.slice(0, -1),
+        reply("model.list", options?.catalog ?? modelCatalog),
         out("session.get", { sessionID: SESSION }),
         replyData("session.get", sessionInfo()),
         ...noOpenRequests,
@@ -377,6 +380,7 @@ const resumed = (
         ]),
       ],
       {
+        ...(options?.promptSuggestions ? { promptSuggestions: true } : {}),
         ...(options?.version === undefined ? {} : { version: options.version }),
         ...(options?.borrowers === undefined ? {} : { borrowers: options.borrowers }),
         ...(options?.fileSystem === undefined ? {} : { fileSystem: options.fileSystem }),
@@ -485,6 +489,151 @@ const nativeGoal = (status: "active" | "paused" | "complete") => ({
 });
 
 it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
+  it.effect.each(["text", "permission"] as const)(
+    "runs one Local Node follow-up after the foreground turn settles (%s)",
+    (outcome) =>
+      Effect.gen(function* () {
+        const suggestionSession = "ses_followup0123456789";
+        const primaryModel = { providerID: "ai-node", id: "opencode/deepseek-v4.1-flash-free" };
+        const answerId = history.data[1]!.id;
+        const prompts: unknown[] = [];
+        const removed = yield* Deferred.make<void>();
+        const { runtime, thread } = yield* resumed(
+          [
+            out("session.switchModel", {
+              sessionID: SESSION,
+              model: { ...primaryModel, variant: "high" },
+            }),
+            reply("session.switchModel", null),
+            out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+            promptAccepted,
+            event("session.execution.started", { sessionID: SESSION }),
+            event("session.text.started", {
+              sessionID: SESSION,
+              assistantMessageID: answerId,
+              ordinal: 0,
+            }),
+            event("session.text.ended", {
+              sessionID: SESSION,
+              assistantMessageID: answerId,
+              ordinal: 0,
+              text: "391 is not prime: it's the product 17 × 23.",
+            }),
+            event("session.execution.succeeded", { sessionID: SESSION }),
+            out("message.list", { sessionID: SESSION, order: "desc", limit: "12" }),
+            reply("message.list", { ...history, data: [...history.data].reverse() }),
+            out("session.create", {
+              title: "T3 Code suggestNextPrompt",
+              location: { directory: WORK },
+              model: { ...primaryModel, variant: "low" },
+              permissions: [{ action: "*", resource: "*", effect: "ask" }],
+            }),
+            replyData("session.create", sessionInfo({ id: suggestionSession })),
+            out("session.prompt", { sessionID: suggestionSession, text: "<any>" }),
+            replyData("session.prompt", {
+              id: PROMPT_ID,
+              sessionID: suggestionSession,
+              time: { created: 1790656601410 },
+              type: "user",
+              payload: { text: "Follow up" },
+              delivery: "steer",
+            }),
+            ...(outcome === "text"
+              ? [
+                  event("session.text.ended", {
+                    sessionID: suggestionSession,
+                    assistantMessageID: answerId,
+                    ordinal: 0,
+                    text: "Show me a quick primality test.",
+                  }),
+                  event("session.execution.succeeded", { sessionID: suggestionSession }),
+                ]
+              : [
+                  event("permission.asked", { ...shellAsk.data, sessionID: suggestionSession }),
+                  out("session.interrupt", { sessionID: suggestionSession }),
+                  reply("session.interrupt", { interrupted: true }),
+                ]),
+            out("session.remove", { sessionID: suggestionSession }),
+            reply("session.remove", null),
+          ],
+          {
+            promptSuggestions: true,
+            catalog: {
+              ...modelCatalog,
+              data: [
+                ...modelCatalog.data,
+                {
+                  ...modelCatalog.data[0]!,
+                  id: primaryModel.id,
+                  modelID: primaryModel.id,
+                  providerID: primaryModel.providerID,
+                  variants: [
+                    { id: "low", settings: { reasoningEffort: "low" } },
+                    { id: "high", settings: { reasoningEffort: "high" } },
+                  ],
+                },
+              ],
+            },
+            onPrompt: (prompt) => prompts.push(prompt),
+            beforeResponse: (path) =>
+              path === `/api/session/${suggestionSession}`
+                ? Deferred.succeed(removed, undefined)
+                : Effect.void,
+          },
+        );
+        const events: ProviderAdapter.ProviderAdapterV2Event[] = [];
+        const published = yield* Deferred.make<void>();
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) =>
+            Effect.gen(function* () {
+              events.push(event);
+              if (event.type === "prompt_suggestion.updated")
+                yield* Deferred.succeed(published, undefined);
+            }),
+          ),
+          Effect.forkScoped,
+        );
+        const turn = turnInput(thread, {
+          instanceId,
+          model: "ai-node/opencode/deepseek-v4.1-flash-free",
+          options: [{ id: "variant", value: "high" }],
+        });
+        yield* runtime.startTurn({
+          ...turn,
+          appThread: {
+            ...turn.appThread,
+            lineage: { rootThreadId: threadId, parentThreadId: null, relationshipToParent: null },
+          },
+        });
+        yield* Deferred.await(removed);
+        if (outcome === "text") yield* Deferred.await(published);
+        assert.isTrue(
+          events.some((event) => event.type === "turn.terminal" && event.status === "completed"),
+        );
+        assert.deepEqual(
+          events.filter((event) => event.type === "prompt_suggestion.updated"),
+          outcome === "text"
+            ? [
+                {
+                  type: "prompt_suggestion.updated",
+                  driver: OPENCODE_PROVIDER,
+                  threadId,
+                  runId: turn.runId,
+                  text: "Show me a quick primality test.",
+                },
+              ]
+            : [],
+        );
+        assert.lengthOf(prompts, 2);
+        const background = prompts[1];
+        assert.isObject(background);
+        const text = (background as { text: string }).text;
+        assert.include(text, "whether 391 is prime");
+        assert.include(text, "391 is not prime");
+        assert.notInclude(text, "Check divisibility up to");
+      }),
+  );
+
   it.effect("switches the session's model and variant before a turn that changed them", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([

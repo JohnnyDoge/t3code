@@ -93,6 +93,7 @@ Enable **Settings → Labs → Suggest next prompt** (web and desktop) to show a
 - Press `Tab` to accept or `Escape` to dismiss.
 - Each suggestion uses one cached request against your plan's usage. Claude skips suggestions on the first turn and near usage limits.
 - Codex requires CLI version 0.165+ (update in **Settings → Providers**). Open Claude threads pick up the setting after restarting.
+- OpenCode 2 conversations routed through Local Node can also show suggestions when DeepSeek Flash is available there at low effort. This sends a short excerpt of the conversation through Local Node in a separate request.
 
 ## Edit an earlier prompt
 

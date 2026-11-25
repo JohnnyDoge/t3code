@@ -21,6 +21,11 @@ const GENERATION_TIMEOUT = "3 minutes";
 // Free models refuse denied read/shell permissions; ask and reject requests as they arrive.
 const GENERATION_PERMISSIONS = [{ action: "*", resource: "*", effect: "ask" }] as const;
 
+type GenerationInput = Pick<
+  TextGenerationOperations.Request<Schema.Top>,
+  "cwd" | "prompt" | "modelSelection" | "attachments"
+> & { readonly operation: string };
+
 // Provider error text stays in cause, outside detail.
 type Outcome =
   | { readonly _tag: "text"; readonly text: string }
@@ -28,7 +33,8 @@ type Outcome =
 
 const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
   connection: OpenCode2Server.OpenCode2Connection,
-  input: TextGenerationOperations.Request<Schema.Top>,
+  input: GenerationInput,
+  suggestion = false,
 ) {
   const { resolveAttachmentPath } = yield* ProviderHost.ProviderHost;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -43,7 +49,13 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
   const variant = OpenCodeRuntime.openCodeVariant(input.modelSelection);
   const outcome = yield* Deferred.make<Outcome>();
   let sessionId: string | undefined;
+  let finished = false;
   const texts = new Map<string, string>();
+  const rejectTool = () =>
+    Deferred.succeed(outcome, {
+      _tag: "failed",
+      detail: "OpenCode tried to use a tool while suggesting a prompt.",
+    });
   // Subscribed first: the stream is volatile, and the reply arrives on it.
   const events = yield* connection.events;
   yield* events.pipe(
@@ -52,6 +64,7 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
       // read still ends the generation, as it ends a turn in the adapter.
       if (event.type === "unreadable.execution.ended") {
         if (event.sessionID !== sessionId) return Effect.void;
+        finished = true;
         return Deferred.succeed(
           outcome,
           event.executionType === "session.execution.succeeded"
@@ -62,6 +75,9 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
                 cause: event,
               },
         );
+      }
+      if (suggestion && event.type === "form.created" && event.data.form.sessionID === sessionId) {
+        return rejectTool();
       }
       if (
         sessionId === undefined ||
@@ -76,6 +92,7 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
           texts.set(`${event.data.assistantMessageID}:${event.data.ordinal}`, event.data.text);
           return Effect.void;
         case "permission.asked":
+          if (suggestion) return rejectTool();
           return client.permission
             .reply({
               sessionID: event.data.sessionID,
@@ -85,21 +102,26 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
             })
             .pipe(Effect.ignore({ log: true }));
         case "session.execution.succeeded":
+          finished = true;
           return Deferred.succeed(outcome, {
             _tag: "text",
             text: [...texts.values()].join("\n").trim(),
           });
         case "session.execution.failed":
+          finished = true;
           return Deferred.succeed(outcome, {
             _tag: "failed",
             detail: "OpenCode could not generate the text.",
             cause: event.data.error,
           });
         case "session.execution.interrupted":
+          finished = true;
           return Deferred.succeed(outcome, {
             _tag: "failed",
             detail: "OpenCode stopped the generation.",
           });
+        case "session.tool.called":
+          return suggestion ? rejectTool() : Effect.void;
         default:
           return Effect.void;
       }
@@ -130,9 +152,16 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
     });
     sessionId = session.id;
     yield* Effect.addFinalizer(() =>
-      client.session
-        .remove({ sessionID: session.id })
-        .pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true })),
+      Effect.gen(function* () {
+        if (suggestion && !finished) {
+          yield* client.session
+            .interrupt({ sessionID: session.id })
+            .pipe(Effect.timeout("2 seconds"), Effect.ignore);
+        }
+        yield* client.session
+          .remove({ sessionID: session.id })
+          .pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true }));
+      }),
     );
     const images: Array<{ uri: string; name: string }> = [];
     // As in the adapter: an external server may not share T3's attachment directory, and
@@ -153,9 +182,9 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
   });
   const result = yield* generate.pipe(
     Effect.timeoutOrElse({
-      duration: GENERATION_TIMEOUT,
+      duration: suggestion ? "10 seconds" : GENERATION_TIMEOUT,
       orElse: () =>
-        (sessionId === undefined
+        (sessionId === undefined || suggestion
           ? Effect.void
           : client.session
               .interrupt({ sessionID: Session.ID.make(sessionId) })
@@ -183,6 +212,11 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
   }
   return result.text;
 }, Effect.scoped);
+
+export const suggestNextPrompt = (
+  connection: OpenCode2Server.OpenCode2Connection,
+  input: Omit<GenerationInput, "operation" | "attachments">,
+) => runOnServer(connection, { ...input, operation: "suggestNextPrompt" }, true);
 
 export const make = Effect.fn("OpenCode2TextGeneration.make")(function* () {
   const server = yield* OpenCode2Server.OpenCode2Server;

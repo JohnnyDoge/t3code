@@ -227,6 +227,7 @@ export const replayServer = (
     readonly onPrompt?: (input: unknown) => void;
     readonly replayGate?: ProviderReplayGate;
     readonly borrowers?: { current: number };
+    readonly shareEvents?: boolean;
   },
 ) =>
   Effect.gen(function* () {
@@ -248,8 +249,15 @@ export const replayServer = (
         ),
       ),
     );
+    const api = yield* opencode.connect({ baseUrl: BASE_URL, password: "replay" });
+    const events = options?.shareEvents
+      ? Effect.succeed(
+          yield* (yield* api.events).pipe(Stream.share({ capacity: "unbounded", replay: 8 })),
+        )
+      : api.events;
     const connection = {
-      ...(yield* opencode.connect({ baseUrl: BASE_URL, password: "replay" })),
+      ...api,
+      events,
       url: BASE_URL,
       version: transcript.version,
       external: options?.external ?? false,
@@ -284,6 +292,7 @@ const makeReplayAdapter = (
     readonly onPrompt?: (input: unknown) => void;
     readonly replayGate?: ProviderReplayGate;
     readonly borrowers?: { current: number };
+    readonly shareEvents?: boolean;
   },
 ) =>
   Effect.gen(function* () {
@@ -343,6 +352,7 @@ export const openCode2ReplayRuntime = (
     readonly attachmentsDir?: string;
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly fileSystem?: FileSystem.FileSystem;
+    readonly promptSuggestions?: boolean;
   },
 ) =>
   Effect.gen(function* () {
@@ -355,9 +365,10 @@ export const openCode2ReplayRuntime = (
         scenario: "opencode2_adapter",
         entries,
       },
-      options,
+      { ...options, ...(options?.promptSuggestions ? { shareEvents: true } : {}) },
     ).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
     return yield* adapter.openSession({
+      ...(options?.promptSuggestions ? { promptSuggestions: Effect.succeed(true) } : {}),
       threadId: ThreadId.make("thread:opencode2-adapter"),
       providerSessionId: ProviderSessionId.make("provider-session:opencode2-adapter"),
       modelSelection: {
