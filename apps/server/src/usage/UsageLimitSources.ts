@@ -19,6 +19,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -34,9 +35,16 @@ import { resolveSettingsSecrets } from "../secrets/settingsSecretValue.ts";
 import * as Settings from "../serverSettings.ts";
 import { windowLimitsModel } from "../provider/claudeUsageLimits.ts";
 import { makeCliproxyApi } from "./cliproxyApi.ts";
+// fork(board): Display estimated Local Node budgets through the read-only HTTP quota surface.
+import {
+  localNodeOrigin,
+  localNodeOverviewUrl,
+  localNodeQuotaAccount,
+  localNodeWindows,
+} from "./localNodeQuota.ts";
 
 const decodeHttpQuotaJson = Schema.decodeUnknownEffect(Schema.fromJsonString(HttpQuotaResponse));
-const decodeHttpQuotaResponse = Effect.fn("UsageLimitSources.decodeHttpQuotaResponse")(function* (
+const readQuotaResponseText = Effect.fn("UsageLimitSources.readQuotaResponseText")(function* (
   response: HttpClientResponse.HttpClientResponse,
 ) {
   let bytes = 0;
@@ -59,8 +67,12 @@ const decodeHttpQuotaResponse = Effect.fn("UsageLimitSources.decodeHttpQuotaResp
       (text, chunk) => text + chunk,
     ),
   );
-  return yield* decodeHttpQuotaJson(text);
+  return text;
 });
+
+const decodeHttpQuotaResponse = (response: HttpClientResponse.HttpClientResponse) =>
+  readQuotaResponseText(response).pipe(Effect.flatMap(decodeHttpQuotaJson));
+const decodeLocalNodeResponse = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 export class UsageLimitSources extends Context.Service<
   UsageLimitSources,
@@ -76,6 +88,7 @@ export class UsageLimitSources extends Context.Service<
 
 function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
   if (config.label) return config.label;
+  if (config.kind === "local-node") return "Local Node";
   const fallback = id.trim() || "Usage limit source";
   try {
     return new URL(config.url).host || fallback;
@@ -150,11 +163,12 @@ export const make = Effect.gen(function* () {
     id: UsageLimitSourceId,
     config: UsageLimitSourceConfig,
   ) {
-    const checkedAt = DateTime.formatIso(yield* DateTime.now);
+    const checked = yield* DateTime.now;
+    const checkedAt = DateTime.formatIso(checked);
     const url = URL.parse(config.url);
     const base = {
       id,
-      kind: config.kind,
+      kind: config.kind === "local-node" ? "http" : config.kind,
       label: sourceLabel(id, config),
       ...(config.kind === "cliproxy" && url && /^https?:$/.test(url.protocol)
         ? {
@@ -164,6 +178,45 @@ export const make = Effect.gen(function* () {
         : {}),
       checkedAt,
     } as const;
+
+    if (config.kind === "local-node") {
+      const report = { ...base, accounts: [], localNodeEstimate: true } as const;
+      const origin = localNodeOrigin(config.url);
+      if (!origin) return { ...report, error: "Local Node must use a loopback dashboard URL." };
+
+      const getJson = (requestUrl: URL) =>
+        http
+          .execute(HttpClientRequest.get(requestUrl))
+          .pipe(
+            Effect.flatMap(HttpClientResponse.filterStatusOk),
+            Effect.flatMap(readQuotaResponseText),
+            Effect.flatMap(decodeLocalNodeResponse),
+            Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
+            Effect.timeout("6 seconds"),
+            Effect.option,
+            Effect.map(Option.getOrUndefined),
+          );
+
+      const now = checked;
+      const ranges = localNodeWindows(now);
+      const readUsage = (start: DateTime.DateTime) =>
+        DateTime.toEpochMillis(start) === DateTime.toEpochMillis(now)
+          ? Effect.succeed({ totals: { inputTokens: 0, outputTokens: 0 } })
+          : getJson(localNodeOverviewUrl(origin, start, now));
+      const [profiles, daily, weekly] = yield* Effect.all(
+        [
+          getJson(new URL("/api/panel/profiles", origin)),
+          readUsage(ranges.daily.start),
+          readUsage(ranges.weekly.start),
+        ],
+        { concurrency: "unbounded" },
+      );
+      const account = localNodeQuotaAccount({ profiles, daily, weekly, now });
+      return account
+        ? { ...report, quotaAccounts: [account] }
+        : { ...report, error: "Could not read Local Node usage or slots." };
+    }
+
     const managementKey = yield* readManagementKey(config);
     if (config.kind === "http") {
       if (!url || !/^https?:$/.test(url.protocol) || url.username || url.password) {

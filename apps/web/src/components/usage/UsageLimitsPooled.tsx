@@ -1,3 +1,5 @@
+// fork(board): Use the native limit bars for the Local Node estimate.
+import { ProviderDriverKind } from "@t3tools/contracts";
 import {
   CHATGPT_USAGE_URL,
   collectHttpQuotaSources,
@@ -38,7 +40,14 @@ import { Button } from "../ui/button";
 import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { PaceIcon, ResetCreditDialog, barColor, usePaceMark, useResetCredit } from "./UsageLimits";
+import {
+  LimitWindows,
+  PaceIcon,
+  ResetCreditDialog,
+  barColor,
+  usePaceMark,
+  useResetCredit,
+} from "./UsageLimits";
 import {
   collectExternalUsageLinks,
   collectLimitNotices,
@@ -730,21 +739,30 @@ export function UsageLimitsPooled({
           {source.quotaAccounts?.map((account) => (
             <div key={account.id} className="space-y-1">
               <h3 className="text-sm font-medium">{account.label}</h3>
-              {account.windows.map((window) => {
-                const reset = formatResetsIn(window, now, m);
-                return (
-                  <div
-                    key={window.id}
-                    className="flex justify-between gap-3 text-sm text-muted-foreground"
-                  >
-                    <span>{window.label}</span>
-                    <span>
-                      {gt("{remaining}% left", { remaining: remainingPercent(window) })}
-                      {reset ? ` · ${reset}` : ""}
-                    </span>
-                  </div>
-                );
-              })}
+              {source.localNodeEstimate ? (
+                <LimitWindows
+                  driver={ProviderDriverKind.make("opencode")}
+                  windows={account.windows}
+                  now={now}
+                  compact
+                />
+              ) : (
+                account.windows.map((window) => {
+                  const reset = formatResetsIn(window, now, m);
+                  return (
+                    <div
+                      key={window.id}
+                      className="flex justify-between gap-3 text-sm text-muted-foreground"
+                    >
+                      <span>{window.label}</span>
+                      <span>
+                        {gt("{remaining}% left", { remaining: remainingPercent(window) })}
+                        {reset ? ` · ${reset}` : ""}
+                      </span>
+                    </div>
+                  );
+                })
+              )}
             </div>
           ))}
         </section>

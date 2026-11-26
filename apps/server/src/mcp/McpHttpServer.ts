@@ -405,8 +405,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     const vmDelegationProject =
       grant !== undefined &&
       grant.environmentId === limited.environmentId &&
-      grant.sourceSessionId === client?.sessionId &&
-      grant.sourceEnvironmentId === client?.senderThread?.environmentId
+      VmDelegation.permitsSource(grant, client?.senderThread?.environmentId, client?.sessionId)
         ? grant.projectId
         : undefined;
     const origin = Option.getOrUndefined(Option.map(requestUrl(request), (url) => url.origin));

@@ -998,25 +998,44 @@ it.effect("an Auto caller can delegate Full Access only through the VM's pinned 
         runtimeMode: "full-access",
         mode: "async",
       };
-      const approved = {
+      const guest = {
         machineId: "0".repeat(32),
         environmentId: box.environmentId,
         projectId: boxProject,
+      };
+      const source = {
         sourceEnvironmentId: laptop.environmentId,
         sourceSessionId: session.sessionId,
       };
+      const approved = { ...guest, ...source };
       for (const rejected of [
         undefined,
         { ...approved, environmentId: laptop.environmentId },
         { ...approved, sourceEnvironmentId: box.environmentId },
         { ...approved, sourceSessionId: "other-pairing" },
         { ...approved, projectId: ProjectId.make("project:other") },
+        {
+          ...guest,
+          sources: [
+            { ...source, sourceSessionId: "different-session" },
+            { ...source, sourceEnvironmentId: box.environmentId },
+          ],
+        } satisfies VmDelegation.Grant,
       ]) {
         yield* Ref.set(grant, rejected);
         expect((yield* a.call("delegate_task", input)).isError).toBe(true);
       }
       expect(yield* Ref.get(thread.launched)).toBeNull();
-      yield* Ref.set(grant, approved);
+      expect(VmDelegation.permitsSource(approved, laptop.environmentId, session.sessionId)).toBe(
+        true,
+      );
+      yield* Ref.set(grant, {
+        ...guest,
+        sources: [
+          { sourceEnvironmentId: box.environmentId, sourceSessionId: "another-approved-session" },
+          source,
+        ],
+      });
 
       const sender = {
         environmentId: laptop.environmentId,

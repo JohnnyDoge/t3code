@@ -12,15 +12,35 @@ const directory = "/etc/t3code";
 const file = `${directory}/vm-delegation.json`;
 const maxBytes = 4096;
 
-const grantSchema = Schema.Struct({
-  machineId: Schema.String.check(Schema.isPattern(/^[0-9a-f]{32}$/u)),
-  environmentId: EnvironmentId,
-  projectId: ProjectId,
+const sourceGrant = Schema.Struct({
   sourceEnvironmentId: EnvironmentId,
   sourceSessionId: TrimmedNonEmptyString,
 });
 
+const guestGrant = {
+  machineId: Schema.String.check(Schema.isPattern(/^[0-9a-f]{32}$/u)),
+  environmentId: EnvironmentId,
+  projectId: ProjectId,
+};
+
+const grantSchema = Schema.Union([
+  Schema.Struct({ ...guestGrant, sources: Schema.NonEmptyArray(sourceGrant) }),
+  Schema.Struct({ ...guestGrant, ...sourceGrant.fields }),
+]);
+
 export type Grant = typeof grantSchema.Type;
+
+export function permitsSource(
+  grant: Grant,
+  environmentId: EnvironmentId | undefined,
+  sessionId: string | undefined,
+): boolean {
+  const sources = "sources" in grant ? grant.sources : [grant];
+  return sources.some(
+    (source) =>
+      source.sourceEnvironmentId === environmentId && source.sourceSessionId === sessionId,
+  );
+}
 
 const decodeGrant = Schema.decodeUnknownSync(Schema.fromJsonString(grantSchema), {
   onExcessProperty: "error",

@@ -1,9 +1,14 @@
-import { type UnifiedSettings, UsageLimitSourceId } from "@t3tools/contracts";
+// fork(board): Local Node keeps its own saved Limits source.
+import {
+  type UnifiedSettings,
+  type UsageLimitSourceConfig,
+  UsageLimitSourceId,
+} from "@t3tools/contracts";
 
 export function sourceIdFromUrl(
   url: string,
   sources: UnifiedSettings["usageLimitSources"],
-  kind: "http" | "cliproxy" = "cliproxy",
+  kind: UsageLimitSourceConfig["kind"] = "cliproxy",
 ): UsageLimitSourceId {
   const saved = Object.entries(sources).find(
     ([, source]) => source.kind === kind && source.url === url,

@@ -966,7 +966,8 @@ export const AntigravitySettings = makeProviderSettingsSchema(
 export type AntigravitySettings = typeof AntigravitySettings.Type;
 
 export const UsageLimitSourceConfig = Schema.Struct({
-  kind: Schema.Literals(["cliproxy", "http"]),
+  // fork(board): Allow a loopback Local Node source in Usage settings.
+  kind: Schema.Literals(["cliproxy", "http", "local-node"]),
   label: Schema.optional(TrimmedNonEmptyString),
   url: TrimmedNonEmptyString,
   managementKey: SettingsSecretValue.pipe(

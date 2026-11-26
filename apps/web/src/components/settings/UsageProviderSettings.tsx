@@ -1,4 +1,5 @@
-import type { EnvironmentId, UnifiedSettings } from "@t3tools/contracts";
+// fork(board): Offer Local Node alongside the existing usage sources.
+import type { EnvironmentId, UnifiedSettings, UsageLimitSourceConfig } from "@t3tools/contracts";
 import { T, useGT, Var } from "gt-react";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
@@ -34,7 +35,7 @@ export function UsageProviderSettings({
   const gt = useGT();
   const searchableSetting = useSearchableSetting();
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
-  const [adding, setAdding] = useState<"cliproxy" | "http" | null>(null);
+  const [adding, setAdding] = useState<UsageLimitSourceConfig["kind"] | null>(null);
   const entries = Object.entries(sources);
 
   return (
@@ -43,7 +44,7 @@ export function UsageProviderSettings({
         {...searchableSetting("usage-providers")}
         headerAction={
           !readOnly ? (
-            <div className="flex gap-2">
+            <div className="flex flex-wrap justify-end gap-2">
               <Button size="xs" variant="outline" onClick={() => setAdding("cliproxy")}>
                 <PlusIcon className="size-3" aria-hidden />
                 <T>Add hub</T>
@@ -51,6 +52,10 @@ export function UsageProviderSettings({
               <Button size="xs" variant="outline" onClick={() => setAdding("http")}>
                 <PlusIcon className="size-3" aria-hidden />
                 <T>Add HTTP source</T>
+              </Button>
+              <Button size="xs" variant="outline" onClick={() => setAdding("local-node")}>
+                <PlusIcon className="size-3" aria-hidden />
+                <T>Add Local Node</T>
               </Button>
             </div>
           ) : null
@@ -60,8 +65,15 @@ export function UsageProviderSettings({
           <SettingsRow title={gt("No usage sources configured.")} />
         ) : (
           entries.map(([id, source]) => {
-            const kindLabel = source.kind === "http" ? gt("HTTP quota source") : CLI_PROXY_NAME;
-            const label = source.label?.trim() || source.url;
+            const kindLabel =
+              source.kind === "local-node"
+                ? gt("Local Node")
+                : source.kind === "http"
+                  ? gt("HTTP quota source")
+                  : CLI_PROXY_NAME;
+            const label =
+              source.label?.trim() ||
+              (source.kind === "local-node" ? gt("Local Node") : source.url);
             return (
               <SettingsRow
                 key={id}

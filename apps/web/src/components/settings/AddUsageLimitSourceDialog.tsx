@@ -1,4 +1,10 @@
-import type { EnvironmentId, SecretReference, UnifiedSettings } from "@t3tools/contracts";
+// fork(board): Local Node uses the same dialog without a secret.
+import type {
+  EnvironmentId,
+  SecretReference,
+  UnifiedSettings,
+  UsageLimitSourceConfig,
+} from "@t3tools/contracts";
 import { T, useGT, Var } from "gt-react";
 import { useId, useState } from "react";
 
@@ -31,7 +37,7 @@ export function AddUsageLimitSourceDialog({
   readonly onOpenChange: (open: boolean) => void;
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
-  readonly kind?: "cliproxy" | "http";
+  readonly kind?: UsageLimitSourceConfig["kind"];
   readonly sources: UnifiedSettings["usageLimitSources"];
 }) {
   const gt = useGT();
@@ -44,7 +50,8 @@ export function AddUsageLimitSourceDialog({
   const [keyValid, setKeyValid] = useState(true);
   const managementKey = typeof keyDraft === "string" ? keyDraft.trim() : keyDraft;
   const trimmedUrl = url.trim();
-  const http = kind === "http";
+  const localNode = kind === "local-node";
+  const http = kind !== "cliproxy";
   const endpoint = URL.parse(trimmedUrl);
   const canSave =
     keyValid &&
@@ -52,7 +59,12 @@ export function AddUsageLimitSourceDialog({
       ? endpoint !== null &&
         /^https?:$/.test(endpoint.protocol) &&
         !endpoint.username &&
-        !endpoint.password
+        !endpoint.password &&
+        (!localNode ||
+          (["localhost", "127.0.0.1", "[::1]"].includes(endpoint.hostname) &&
+            !endpoint.search &&
+            !endpoint.hash &&
+            ["/", "/v1", "/v1/"].includes(endpoint.pathname)))
       : trimmedUrl.length > 0 && managementKey !== "");
 
   const reset = () => {
@@ -71,7 +83,7 @@ export function AddUsageLimitSourceDialog({
           kind,
           ...(label.trim() ? { label: label.trim() } : {}),
           url: trimmedUrl,
-          managementKey,
+          managementKey: localNode ? "" : managementKey,
           enabled: true,
         },
       },
@@ -91,10 +103,21 @@ export function AddUsageLimitSourceDialog({
       <DialogPopup className="max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {http ? <T>Add an HTTP quota source</T> : <T>Add a CLIProxyAPI hub</T>}
+            {localNode ? (
+              <T>Add Local Node</T>
+            ) : http ? (
+              <T>Add an HTTP quota source</T>
+            ) : (
+              <T>Add a CLIProxyAPI hub</T>
+            )}
           </DialogTitle>
           <DialogDescription>
-            {http ? (
+            {localNode ? (
+              <T>
+                Show slots and estimated token budgets from the Local Node dashboard on{" "}
+                <Var>{environmentLabel}</Var>.
+              </T>
+            ) : http ? (
               <T>
                 Read quotas from an endpoint on <Var>{environmentLabel}</Var>.
               </T>
@@ -117,38 +140,42 @@ export function AddUsageLimitSourceDialog({
           >
             <div className="grid gap-1.5">
               <Label htmlFor="usage-source-url">
-                {http ? <T>Endpoint URL</T> : <T>Hub URL</T>}
+                {localNode ? <T>Dashboard URL</T> : http ? <T>Endpoint URL</T> : <T>Hub URL</T>}
               </Label>
               <Input
                 id="usage-source-url"
-                placeholder="https://hub.example.ts.net:8318"
+                placeholder={
+                  localNode ? "http://127.0.0.1:8787" : "https://hub.example.ts.net:8318"
+                }
                 value={url}
                 onChange={(event) => setUrl(event.target.value)}
                 autoFocus
               />
             </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="usage-source-key">
-                {http ? <T>Bearer token (optional)</T> : <T>Management key</T>}
-              </Label>
-              <SecretSourceInput
-                id="usage-source-key"
-                aria-label={http ? gt("Bearer token (optional)") : gt("Management key")}
-                value={keyDraft}
-                sources={secretSources}
-                environmentId={environmentId}
-                onChange={(event) => setKeyDraft(event.target.value)}
-                onSecretChange={(secret) => setKeyDraft(secret ?? "")}
-                onValidityChange={setKeyValid}
-              />
-            </div>
+            {!localNode ? (
+              <div className="grid gap-1.5">
+                <Label htmlFor="usage-source-key">
+                  {http ? <T>Bearer token (optional)</T> : <T>Management key</T>}
+                </Label>
+                <SecretSourceInput
+                  id="usage-source-key"
+                  aria-label={http ? gt("Bearer token (optional)") : gt("Management key")}
+                  value={keyDraft}
+                  sources={secretSources}
+                  environmentId={environmentId}
+                  onChange={(event) => setKeyDraft(event.target.value)}
+                  onSecretChange={(secret) => setKeyDraft(secret ?? "")}
+                  onValidityChange={setKeyValid}
+                />
+              </div>
+            ) : null}
             <div className="grid gap-1.5">
               <Label htmlFor="usage-source-label">
                 <T>Label (optional)</T>
               </Label>
               <Input
                 id="usage-source-label"
-                placeholder={gt("Defaults to the hub's host name")}
+                placeholder={localNode ? gt("Local Node") : gt("Defaults to the hub's host name")}
                 value={label}
                 onChange={(event) => setLabel(event.target.value)}
               />

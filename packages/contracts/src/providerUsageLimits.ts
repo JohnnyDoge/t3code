@@ -117,6 +117,8 @@ export const UsageLimitSourceSnapshot = Schema.Struct({
   quotaAccounts: Schema.optional(ForwardCompatibleArray(HttpQuotaAccount)),
   /** Hub provider names of enabled accounts that T3 Code cannot read. */
   unreadProviders: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  // fork(board): Mark the simulated Local Node display without changing provider quotas.
+  localNodeEstimate: Schema.optional(Schema.Literal(true)),
   error: Schema.optional(TrimmedNonEmptyString),
 });
 export type UsageLimitSourceSnapshot = typeof UsageLimitSourceSnapshot.Type;

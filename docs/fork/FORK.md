@@ -311,6 +311,26 @@ alone.
 
 ---
 
+### Full Access delegation to a VM
+
+The receiving Linux Hyper-V guest can opt in through `/etc/t3code/vm-delegation.json`.
+Only the guest administrator can write the file and its directory. Configure the guest's
+machine ID, T3 environment ID, project ID, and the source environment ID and authenticated
+link session ID for each permitted source. In JSON these are `machineId`, `environmentId`,
+`projectId`, and a `sources` array of `sourceEnvironmentId` and `sourceSessionId` pairs.
+
+Requests must use `delegate_task` with `runtimeMode: "full-access"` and arrive through
+the matching Full Access link. The caller stays in Auto, and the launched thread cannot
+forward a new task through the guest's links. Remove the file to stop granting new launches.
+
+### Local Node in Usage Limits
+
+Add Local Node in the Usage settings on the T3 server running the dashboard. The dashboard URL
+must be loopback, and the source reads its existing profile and overview routes. Slots are the
+configured accounts and their current availability. Daily and Weekly are estimates based on
+500 million tokens per day and 3.5 billion per week. The display uses the T3 server's local
+midnight and resets the week on Friday. It has no effect on request admission.
+
 ## 6. Seam registry (upstream files touched by the fork)
 
 | Upstream file                                              | Seam                                                                                                           | Why                                                       |
@@ -349,3 +369,13 @@ alone.
 | `docs/user/composer.md` | Document OpenCode follow-up suggestions. | Keep this fork feature through upstream sync |
 | `packages/provider-opencode/src/server/v2/adapter.ts` | Generate an OpenCode follow-up on the configured Local Node route. | Keep this fork feature through upstream sync |
 | `packages/provider-opencode/src/server/v2/textGeneration.ts` | Apply the configured model when generating an OpenCode follow-up. | Keep this fork feature through upstream sync |
+| `apps/server/src/usage/localNodeQuota.ts` | Read and validate the optional Local Node Limits calculation | Preserve Local Node Limits through upstream sync |
+| `apps/server/src/usage/localNodeQuota.test.ts` | Read and validate the optional Local Node Limits calculation | Preserve Local Node Limits through upstream sync |
+| `packages/contracts/src/settings.ts` | Opt in to the Local Node dashboard as a Limits source | Preserve Local Node Limits through upstream sync |
+| `packages/contracts/src/providerUsageLimits.ts` | Identify the simulated limits in the presentation | Preserve Local Node Limits through upstream sync |
+| `apps/server/src/usage/UsageLimitSources.ts` | Read Local Node aggregates only for the selected source | Preserve Local Node Limits through upstream sync |
+| `apps/web/src/components/settings/AddUsageLimitSourceDialog.logic.ts` | Keep a stable ID when adding the Local Node source | Preserve Local Node Limits through upstream sync |
+| `apps/web/src/components/settings/AddUsageLimitSourceDialog.tsx` | Configure the loopback Local Node dashboard in the existing dialog | Preserve Local Node Limits through upstream sync |
+| `apps/web/src/components/settings/UsageProviderSettings.tsx` | Expose the Local Node source in Usage settings | Preserve Local Node Limits through upstream sync |
+| `apps/web/src/components/usage/UsageLimitsPooled.tsx` | Reuse native meters for the three Local Node rows | Preserve Local Node Limits through upstream sync |
+| `apps/web/src/components/settings/AddUsageLimitSourceDialog.browser.test.tsx` | Verify that Local Node setup uses a loopback URL without a key | Preserve Local Node Limits through upstream sync |

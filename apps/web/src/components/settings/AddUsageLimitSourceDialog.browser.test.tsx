@@ -18,6 +18,35 @@ vi.mock(import("./SecretSourceInput"), async (original) => ({
 import { AddUsageLimitSourceDialog } from "./AddUsageLimitSourceDialog";
 
 describe("AddUsageLimitSourceDialog", () => {
+  // fork(board): Add the optional dashboard without collecting credentials.
+  it("adds a loopback Local Node Limits source without a key", async () => {
+    updateSettings.mockClear();
+    await using _screen = await render(
+      <AddUsageLimitSourceDialog
+        open
+        onOpenChange={vi.fn()}
+        environmentId={EnvironmentId.make("local")}
+        environmentLabel="This PC"
+        kind="local-node"
+        sources={{}}
+      />,
+    );
+
+    await expect.element(page.getByLabelText("Dashboard URL")).toBeVisible();
+    await expect.element(page.getByLabelText("Management key")).not.toBeInTheDocument();
+    await userEvent.type(page.getByLabelText("Dashboard URL"), "http://127.0.0.1:8787{Enter}");
+    expect(updateSettings).toHaveBeenCalledWith({
+      usageLimitSources: {
+        "local-node-127.0.0.1-8787": {
+          kind: "local-node",
+          url: "http://127.0.0.1:8787",
+          managementKey: "",
+          enabled: true,
+        },
+      },
+    });
+  });
+
   it("adds the hub when Enter is pressed in a field", async () => {
     updateSettings.mockClear();
     const onOpenChange = vi.fn();
