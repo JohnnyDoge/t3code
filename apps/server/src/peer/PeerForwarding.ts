@@ -28,6 +28,7 @@ import { readCaller, unavailable } from "../mcp/threadAccess.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
+import * as VmDelegation from "./VmDelegation.ts"; // fork(board)
 
 // Match local waits: return before MCP client timeouts and T3 Connect's ~100 s idle drop.
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
@@ -201,13 +202,19 @@ const make = Effect.gen(function* () {
             threadId: caller.id,
             title: caller.title,
           };
+    const requestsVmAccess =
+      vmFullAccess === true ||
+      (sender !== undefined &&
+        VmDelegation.mayRequestAccess(limits, scope.runtimeModeCeiling) &&
+        (VmDelegation.projectSetupTool(toolName) ||
+          (toolName === "t3_thread_launch" && args.runtimeMode === "full-access")));
     return yield* peers.call({
       environmentId,
       tool: toolName,
       arguments: args,
       limits,
       ...(sender === undefined ? {} : { sender }),
-      ...(vmFullAccess === true ? { vmFullAccess } : {}),
+      ...(requestsVmAccess ? { vmFullAccess: true } : {}),
       success: success as Schema.Decoder<A>,
     });
   });

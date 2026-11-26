@@ -155,9 +155,9 @@ export interface McpInvocationScope {
   readonly requestNamespace: string;
   readonly thread: McpThreadCaller | undefined;
   readonly client: McpClientCaller | undefined;
-  // fork(board): Carry the verified VM project in the request scope.
-  /** The receiving VM's administrator approved one linked launch in this project. */
-  readonly vmDelegationProject?: ProjectId | undefined;
+  // fork(board): Only the receiving VM can verify the administrator's grant.
+  /** Null projectId grants access across this VM. A project id retains the original launch-only grant. */
+  readonly vmDelegation?: { readonly projectId: ProjectId | null } | undefined;
   /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
   readonly linkedEnvironments?: boolean;
   /** The Agent feedback mode here; `/mcp` reads it per request. Unset is off. */

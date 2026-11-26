@@ -537,16 +537,27 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
       }),
     // The launched thread carries the caller's link, if it has one.
     "stamped",
-    // fork(board): Restrict the VM exception to this launch and the authenticated sender.
-    (input, scope) =>
-      scope.vmDelegationProject !== undefined &&
-      input.projectId === scope.vmDelegationProject &&
-      input.runtimeMode === "full-access" &&
-      input.scratch !== true &&
-      input.workspaceStrategy === undefined &&
-      input.delegatedFrom?.environmentId === scope.client?.senderThread?.environmentId &&
-      input.delegatedFrom?.threadId !== undefined &&
-      input.delegatedFrom.threadId === scope.client?.senderThread?.threadId,
+    // fork(board): Honor the guest grant and bind claimed delegation to the authenticated sender.
+    (input, scope) => {
+      const grant = scope.vmDelegation;
+      const sender = scope.client?.senderThread;
+      if (
+        !grant ||
+        !sender ||
+        input.runtimeMode !== "full-access" ||
+        input.interactionMode === "plan"
+      )
+        return false;
+      const delegatedFromSender =
+        input.delegatedFrom?.environmentId === sender.environmentId &&
+        input.delegatedFrom.threadId === sender.threadId;
+      return grant.projectId === null
+        ? input.delegatedFrom === undefined || delegatedFromSender
+        : input.projectId === grant.projectId &&
+            input.scratch !== true &&
+            input.workspaceStrategy === undefined &&
+            delegatedFromSender;
+    },
   ),
   t3_project_list: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
@@ -624,7 +635,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
       }),
     // Linked work may bring the repository it works in; an existing
     // registered workspace is still refused.
-    { linkedCallers: "allowed" },
+    { linkedCallers: "allowed", vmProjectSetup: true }, // fork(board)
   ),
   t3_project_update: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
@@ -669,6 +680,6 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         );
       }),
     // An existing destination is never adopted.
-    { linkedCallers: "allowed" },
+    { linkedCallers: "allowed", vmProjectSetup: true }, // fork(board)
   ),
 });

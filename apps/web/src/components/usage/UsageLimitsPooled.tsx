@@ -1,4 +1,4 @@
-// fork(board): Use the native limit bars for the Local Node estimate.
+// fork(board): Render Local Node allowances with the provider Limits cards.
 import { ProviderDriverKind } from "@t3tools/contracts";
 import {
   CHATGPT_USAGE_URL,
@@ -40,14 +40,7 @@ import { Button } from "../ui/button";
 import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import {
-  LimitWindows,
-  PaceIcon,
-  ResetCreditDialog,
-  barColor,
-  usePaceMark,
-  useResetCredit,
-} from "./UsageLimits";
+import { PaceIcon, ResetCreditDialog, barColor, usePaceMark, useResetCredit } from "./UsageLimits";
 import {
   collectExternalUsageLinks,
   collectLimitNotices,
@@ -653,9 +646,16 @@ function PoolWindowCard({
   );
 }
 
-function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: number }) {
+function PoolSection({
+  pool,
+  now,
+  label = providerClients.get(pool.driver)?.label ?? String(pool.driver), // fork(board)
+}: {
+  readonly pool: LimitPool;
+  readonly now: number;
+  readonly label?: string;
+}) {
   const color = barColor(pool.driver);
-  const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
   const windows = displayLimitWindows(pool);
   const m = useMessages();
   return (
@@ -688,6 +688,56 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
   );
 }
 
+// fork(board): Keep external readings out of provider quota enforcement.
+function collectLocalNodePools(sources: ReturnType<typeof collectHttpQuotaSources>, now: number) {
+  const driver = ProviderDriverKind.make("opencode");
+  return sources.flatMap((source) => {
+    if (!source.localNodeEstimate) return [];
+    const accounts: LimitAccount[] = (source.quotaAccounts ?? []).map((account) => ({
+      key: `${source.key}:${account.id}`,
+      driver,
+      displayName: source.label,
+      email: undefined,
+      plan: undefined,
+      accentColor: undefined,
+      environments: [],
+      sourceLabel: null,
+      redeem: null,
+      limits: {
+        checkedAt: source.checkedAt,
+        // Older Local Node reports included caveats in the window labels.
+        windows: account.windows.map((window) => {
+          if (window.id === "daily")
+            return {
+              ...window,
+              label: "Daily",
+              windowDurationMins: window.windowDurationMins ?? 1_440,
+            };
+          if (window.id === "weekly")
+            return {
+              ...window,
+              label: "Weekly",
+              windowDurationMins: window.windowDurationMins ?? 10_080,
+            };
+          return window;
+        }),
+      },
+    }));
+    const [pool] = collectLimitPools(accounts, now);
+    if (!pool) return [];
+    return [
+      {
+        ...pool,
+        key: source.key,
+        label: source.label,
+        windows: pool.windows.toSorted(
+          (left, right) => Number(right.id === "slots") - Number(left.id === "slots"),
+        ),
+      },
+    ];
+  });
+}
+
 export function UsageLimitsPooled({
   presentations,
   now,
@@ -701,6 +751,7 @@ export function UsageLimitsPooled({
   const segmentPopoverActions = useRef<PopoverPrimitive.Root.Actions | null>(null);
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
   const quotaSources = collectHttpQuotaSources(presentations);
+  const localNodePools = collectLocalNodePools(quotaSources, now);
   const notices = collectLimitNotices(presentations, m);
   const externalLinks = collectExternalUsageLinks(presentations, m);
   return (
@@ -719,6 +770,9 @@ export function UsageLimitsPooled({
             <PoolSection pool={pool} now={now} />
           </Fragment>
         ))}
+        {localNodePools.map((pool) => (
+          <PoolSection key={pool.key} pool={pool} label={pool.label} now={now} />
+        ))}
       </SegmentPopoverContext>
       <Popover handle={segmentPopover} actionsRef={segmentPopoverActions}>
         {({ payload }) =>
@@ -727,27 +781,21 @@ export function UsageLimitsPooled({
               handle={segmentPopover}
               actions={segmentPopoverActions}
               payload={payload}
-              pools={pools}
+              pools={[...pools, ...localNodePools]}
               now={now}
             />
           ) : null
         }
       </Popover>
-      {quotaSources.map((source) => (
-        <section key={source.key} className="space-y-3 rounded-xl border p-4">
-          <h2 className="text-sm font-medium">{source.label}</h2>
-          {source.quotaAccounts?.map((account) => (
-            <div key={account.id} className="space-y-1">
-              <h3 className="text-sm font-medium">{account.label}</h3>
-              {source.localNodeEstimate ? (
-                <LimitWindows
-                  driver={ProviderDriverKind.make("opencode")}
-                  windows={account.windows}
-                  now={now}
-                  compact
-                />
-              ) : (
-                account.windows.map((window) => {
+      {quotaSources
+        .filter((source) => !source.localNodeEstimate)
+        .map((source) => (
+          <section key={source.key} className="space-y-3 rounded-xl border p-4">
+            <h2 className="text-sm font-medium">{source.label}</h2>
+            {source.quotaAccounts?.map((account) => (
+              <div key={account.id} className="space-y-1">
+                <h3 className="text-sm font-medium">{account.label}</h3>
+                {account.windows.map((window) => {
                   const reset = formatResetsIn(window, now, m);
                   return (
                     <div
@@ -761,12 +809,11 @@ export function UsageLimitsPooled({
                       </span>
                     </div>
                   );
-                })
-              )}
-            </div>
-          ))}
-        </section>
-      ))}
+                })}
+              </div>
+            ))}
+          </section>
+        ))}
       {externalLinks.map((link) => (
         <section
           key={link.url}

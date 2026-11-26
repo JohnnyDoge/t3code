@@ -397,16 +397,14 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       limited.thread === undefined &&
       client?.linked === true &&
       client.access === "full-access" &&
-      client.narrowedTo?.runtimeMode === "auto" &&
-      client.narrowedTo.interactionMode === "default" &&
-      (runtimeModeCeiling === undefined || runtimeModeCeiling === "full-access")
+      VmDelegation.mayRequestAccess(client.narrowedTo, runtimeModeCeiling)
         ? yield* loadVmGrant
         : undefined;
-    const vmDelegationProject =
+    const vmDelegation =
       grant !== undefined &&
       grant.environmentId === limited.environmentId &&
       VmDelegation.permitsSource(grant, client?.senderThread?.environmentId, client?.sessionId)
-        ? grant.projectId
+        ? { projectId: "projectScope" in grant ? null : grant.projectId }
         : undefined;
     const origin = Option.getOrUndefined(Option.map(requestUrl(request), (url) => url.origin));
     const forge =
@@ -422,7 +420,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       origin,
       ...(forge === undefined ? {} : { forge }),
       ...(toolExposure === undefined ? {} : { toolExposure }),
-      ...(vmDelegationProject === undefined ? {} : { vmDelegationProject }),
+      ...(vmDelegation === undefined ? {} : { vmDelegation }),
     };
   });
   // Untraced: a span here would wrap the tool call; the HTTP server span already covers it.

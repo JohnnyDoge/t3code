@@ -49,9 +49,12 @@ describe("Local Node estimated limits", () => {
       ["Daily", 50],
       ["Weekly", 50],
     ]);
+    expect(account?.windows.slice(1).map((window) => window.windowDurationMins)).toEqual([
+      1_440, 10_080,
+    ]);
   });
 
-  it("labels partial usage, omits entirely unavailable data and caps the display", () => {
+  it("counts available usage, omits entirely unavailable data and caps the display", () => {
     const account = localNodeQuotaAccount({
       now,
       profiles: undefined,
@@ -60,7 +63,7 @@ describe("Local Node estimated limits", () => {
         totals: { inputTokens: 4_000_000_000, outputTokens: null, unknownUsageRequests: 2 },
       },
     });
-    expect(account?.windows).toMatchObject([{ label: "Weekly · partial", usedPercent: 100 }]);
+    expect(account?.windows).toMatchObject([{ label: "Weekly", usedPercent: 100 }]);
   });
 
   it("constructs only loopback dashboard URLs without credentials", () => {

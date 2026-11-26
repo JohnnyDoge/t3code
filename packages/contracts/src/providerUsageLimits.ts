@@ -95,6 +95,7 @@ export const HttpQuotaAccount = Schema.Struct({
       label: ServerProviderUsageWindow.fields.label,
       usedPercent: ServerProviderUsageWindow.fields.usedPercent,
       resetsAt: ServerProviderUsageWindow.fields.resetsAt,
+      windowDurationMins: ServerProviderUsageWindow.fields.windowDurationMins, // fork(board)
     }),
   ),
 });

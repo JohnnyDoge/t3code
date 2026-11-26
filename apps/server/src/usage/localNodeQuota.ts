@@ -11,7 +11,6 @@ const totalsSchema = Schema.Struct({
   totals: Schema.Struct({
     inputTokens: Schema.NullOr(Schema.Number),
     outputTokens: Schema.NullOr(Schema.Number),
-    unknownUsageRequests: Schema.optional(Schema.Number),
   }),
 });
 
@@ -73,11 +72,11 @@ function tokenWindow(
   label: string,
   data: unknown,
   limit: number,
-  reset: DateTime.DateTime,
+  range: ReturnType<typeof localNodeWindows>["daily"],
 ): Window | undefined {
   const decoded = Option.getOrUndefined(decodeTotals(data));
   if (!decoded) return undefined;
-  const { inputTokens, outputTokens, unknownUsageRequests } = decoded.totals;
+  const { inputTokens, outputTokens } = decoded.totals;
   const parts = [inputTokens, outputTokens];
   if (
     parts.every((count) => count === null) ||
@@ -85,15 +84,17 @@ function tokenWindow(
   ) {
     return undefined;
   }
-  const partial = parts.some((count) => count === null) || (unknownUsageRequests ?? 0) > 0;
   // Cached input is already part of input, and reasoning is already part of output.
   const used = (inputTokens ?? 0) + (outputTokens ?? 0);
   return {
     id,
     kind: id === "daily" ? "session" : "weekly",
-    label: partial ? `${label} · partial` : label,
+    label,
     usedPercent: Math.min(100, (100 * used) / limit),
-    resetsAt: asIso(DateTime.formatIso(reset)),
+    resetsAt: asIso(DateTime.formatIso(range.reset)),
+    windowDurationMins: Math.round(
+      (DateTime.toEpochMillis(range.reset) - DateTime.toEpochMillis(range.start)) / 60_000,
+    ),
   };
 }
 
@@ -118,11 +119,9 @@ export function localNodeQuotaAccount(input: {
     });
   }
   const { daily, weekly } = localNodeWindows(input.now);
-  const day = tokenWindow("daily", "Daily", input.daily, dailyTokens, daily.reset);
-  const week = tokenWindow("weekly", "Weekly", input.weekly, weeklyTokens, weekly.reset);
+  const day = tokenWindow("daily", "Daily", input.daily, dailyTokens, daily);
+  const week = tokenWindow("weekly", "Weekly", input.weekly, weeklyTokens, weekly);
   if (day) windows.push(day);
   if (week) windows.push(week);
-  return windows.length > 0
-    ? { id: "local-node", label: "Estimated token budgets · 500M daily · 3.5B weekly", windows }
-    : undefined;
+  return windows.length > 0 ? { id: "local-node", label: "Local Node", windows } : undefined;
 }

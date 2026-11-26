@@ -317,7 +317,7 @@ export function collectHttpQuotaSources(presentations: Parameters<typeof collect
               ...source,
               key: `${environmentId}:${source.id}`,
               label:
-                presentations.size > 1
+                presentations.size > 1 && !source.localNodeEstimate // fork(board)
                   ? `${presentation.entry.target.label} · ${source.label}`
                   : source.label,
             },

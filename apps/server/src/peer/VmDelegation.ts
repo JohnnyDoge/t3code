@@ -1,7 +1,13 @@
 // fork(board): Load the root-owned grant for the designated Hyper-V guest.
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- O_NOFOLLOW and metadata from the opened descriptor are needed for the administrator grant.
 import { constants, lstat, open, readFile } from "node:fs/promises";
-import { EnvironmentId, ProjectId, TrimmedNonEmptyString } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  type ProviderInteractionMode,
+  type RuntimeMode,
+  TrimmedNonEmptyString,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -20,15 +26,40 @@ const sourceGrant = Schema.Struct({
 const guestGrant = {
   machineId: Schema.String.check(Schema.isPattern(/^[0-9a-f]{32}$/u)),
   environmentId: EnvironmentId,
-  projectId: ProjectId,
 };
 
 const grantSchema = Schema.Union([
-  Schema.Struct({ ...guestGrant, sources: Schema.NonEmptyArray(sourceGrant) }),
-  Schema.Struct({ ...guestGrant, ...sourceGrant.fields }),
+  Schema.Struct({
+    ...guestGrant,
+    projectScope: Schema.Literal("all"),
+    sources: Schema.NonEmptyArray(sourceGrant),
+  }),
+  Schema.Struct({
+    ...guestGrant,
+    projectId: ProjectId,
+    sources: Schema.NonEmptyArray(sourceGrant),
+  }),
+  Schema.Struct({ ...guestGrant, projectId: ProjectId, ...sourceGrant.fields }),
 ]);
 
 export type Grant = typeof grantSchema.Type;
+
+export function mayRequestAccess(
+  limits:
+    | { readonly runtimeMode: RuntimeMode; readonly interactionMode: ProviderInteractionMode }
+    | undefined,
+  ceiling: RuntimeMode | undefined,
+): boolean {
+  return (
+    limits?.runtimeMode === "auto" &&
+    limits.interactionMode === "default" &&
+    (ceiling === undefined || ceiling === "full-access")
+  );
+}
+
+export function projectSetupTool(name: string): boolean {
+  return name === "t3_project_create" || name === "t3_project_clone";
+}
 
 export function permitsSource(
   grant: Grant,
@@ -77,7 +108,7 @@ async function readGrant(): Promise<Grant | undefined> {
   }
 }
 
-// Read on explicit delegation so removal revokes new launches immediately.
+// Read on each eligible call so removing the file also revokes VM project setup.
 export const LoadGrant = Context.Reference<Effect.Effect<Grant | undefined>>(
   "t3/peer/VmDelegation/LoadGrant",
   {

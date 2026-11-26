@@ -23,6 +23,7 @@ import {
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import * as VmDelegation from "../peer/VmDelegation.ts"; // fork(board)
 import {
   assertFullAccessNamingLink,
   assertNotLinked,
@@ -316,7 +317,18 @@ export const startsThreads = <P, A, E, R>(
           yield* started(caller, params, allowsVmDelegation?.(params, caller.scope) === true),
         );
       }),
-    (params: P) => Effect.flatMap(writingCaller, (caller) => started(caller, params)),
+    (params: P) =>
+      Effect.flatMap(writingCaller, (caller) =>
+        started(
+          caller,
+          params,
+          // fork(board): Let only the receiving VM decide whether this remote launch can rise.
+          allowsVmDelegation !== undefined &&
+            caller.caller !== undefined &&
+            modes(params).runtimeMode === "full-access" &&
+            VmDelegation.mayRequestAccess(caller.limits, caller.scope.runtimeModeCeiling),
+        ),
+      ),
   );
 };
 
@@ -373,6 +385,7 @@ export const writesEnvironment = <P, A, E, R>(
      * everything already here as it was.
      */
     readonly linkedCallers?: "allowed";
+    readonly vmProjectSetup?: true; // fork(board)
   },
 ) => {
   const check = orchestratingCaller.pipe(
@@ -382,7 +395,9 @@ export const writesEnvironment = <P, A, E, R>(
         : assertNotLinked(caller, changesEnvironment),
     ),
     Effect.tap((caller) =>
-      assertFullAccessNamingLink(caller, fullAccessRequired, changesEnvironment),
+      options?.vmProjectSetup && caller.scope.vmDelegation?.projectId === null
+        ? Effect.void
+        : assertFullAccessNamingLink(caller, fullAccessRequired, changesEnvironment),
     ),
   );
   return declare(
@@ -390,7 +405,14 @@ export const writesEnvironment = <P, A, E, R>(
     // Linked work never reaches a link at all; that is checked as the call goes.
     () =>
       orchestratingCaller.pipe(
-        Effect.tap((caller) => assertFullAccess(caller, fullAccessRequired)),
+        Effect.tap((caller) =>
+          // fork(board): Pass the original Auto limits and let the receiving guest authorize.
+          options?.vmProjectSetup &&
+          caller.caller !== undefined &&
+          VmDelegation.mayRequestAccess(caller.limits, caller.scope.runtimeModeCeiling)
+            ? Effect.void
+            : assertFullAccess(caller, fullAccessRequired),
+        ),
       ),
   );
 };

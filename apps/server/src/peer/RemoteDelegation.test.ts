@@ -106,6 +106,7 @@ interface BoxThread {
   readonly holdRefill: Ref.Ref<boolean>;
   readonly beforeTail: Ref.Ref<Effect.Effect<void>>;
   readonly launched: Ref.Ref<ThreadId | null>;
+  readonly projects: Ref.Ref<readonly Project[]>;
   /** The link session that launched it, as the box stamps it. */
   readonly linkOrigin: Ref.Ref<{ readonly sessionId: string; readonly label: string } | null>;
   /** The parent the launch names, so the thread there can link back to it. */
@@ -199,6 +200,7 @@ const makeBoxThread = Effect.gen(function* () {
     releaseStop: yield* Deferred.make<void>(),
     sent: yield* Ref.make<ReadonlyArray<string>>([]),
     afterLaunch: yield* Ref.make<Effect.Effect<void>>(Effect.void),
+    projects: yield* Ref.make<readonly Project[]>([]),
   } satisfies BoxThread;
 });
 
@@ -610,7 +612,29 @@ const boxToolkitLayer = (thread: BoxThread) => {
     Layer.provide(
       Layer.mock(ProjectService.ProjectService)({
         getById: (id) =>
-          Effect.succeed(Option.fromNullishOr(boxProjects.find((project) => project.id === id))),
+          Ref.get(thread.projects).pipe(
+            Effect.map((created) =>
+              Option.fromNullishOr(
+                [...boxProjects, ...created].find((project) => project.id === id),
+              ),
+            ),
+          ),
+        create: (input) =>
+          Effect.gen(function* () {
+            const project: Project = {
+              id: input.projectId,
+              title: input.title,
+              workspaceRoot: input.workspaceRoot,
+              repositoryIdentity: null,
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: "2026-10-01T00:00:00.000Z",
+              updatedAt: "2026-10-01T00:00:00.000Z",
+              deletedAt: null,
+            };
+            yield* Ref.update(thread.projects, (current) => [...current, project]);
+            return project;
+          }),
         // More than a page, so finding the project with this repository pages.
         listPage: ({ cursor, limit }) =>
           Effect.succeed({
@@ -703,7 +727,20 @@ const makeLaptop = (
       Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
       Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
     );
-    const layerHere = McpHttpServer.layerOrchestratorToolkit.pipe(
+    const layerHere = Layer.merge(
+      McpHttpServer.layerOrchestratorToolkit,
+      McpHttpServer.layerProjectRegistration,
+    ).pipe(
+      Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+      Layer.provide(
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/p" }),
+      ),
+      Layer.provide(Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({})),
+      Layer.provide(
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-remote-delegation-source-" }).pipe(
+          Layer.provide(NodeServices.layer),
+        ),
+      ),
       Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
       Layer.provideMerge(
         RemoteDelegation.layer.pipe(
@@ -1109,6 +1146,97 @@ it.effect("an Auto caller can delegate Full Access only through the VM's pinned 
       const { taskId } = launched.structuredContent as { taskId: NodeId };
       const settled = yield* taskResult(a, taskId);
       expect(settled).toMatchObject({ status: "completed", result: "Found it." });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("the isolated VM grant registers and launches new projects from Auto", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const grant = yield* Ref.make<VmDelegation.Grant | undefined>(undefined);
+      const b = yield* serveBox(thread).pipe(
+        Effect.provideService(VmDelegation.LoadGrant, Ref.get(grant)),
+      );
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a, modelSelection, "auto");
+      const [session] = yield* b.linkedSessions;
+      if (!session) return yield* Effect.die("expected the authenticated link");
+
+      const source = {
+        sourceEnvironmentId: laptop.environmentId,
+        sourceSessionId: session.sessionId,
+      };
+      const guest = {
+        machineId: "0".repeat(32),
+        environmentId: box.environmentId,
+        sources: [source],
+      } as const;
+      const register = {
+        environmentId: box.environmentId,
+        title: "New VM project",
+        workspaceRoot: "/srv/new-vm-project",
+        createWorkspaceRootIfMissing: true,
+      };
+      for (const rejected of [
+        undefined,
+        { ...guest, projectId: boxProject },
+        { ...guest, projectScope: "all", environmentId: laptop.environmentId },
+        {
+          ...guest,
+          projectScope: "all",
+          sources: [{ ...source, sourceSessionId: "wrong-session" }],
+        },
+      ] as const) {
+        yield* Ref.set(grant, rejected);
+        expect((yield* a.call("t3_project_create", register)).isError).toBe(true);
+      }
+      expect(yield* Ref.get(thread.projects)).toEqual([]);
+      yield* Ref.set(grant, { ...guest, projectScope: "all" });
+
+      const created = yield* a.call("t3_project_create", register);
+      expect(created.isError, JSON.stringify(created.content)).toBe(false);
+      const { id: projectId } = created.structuredContent as Project;
+      expect(projectId).not.toBe(boxProject);
+      expect(yield* Ref.get(thread.projects)).toMatchObject([
+        { id: projectId, workspaceRoot: register.workspaceRoot },
+      ]);
+      const launched = yield* a.call("t3_thread_launch", {
+        environmentId: box.environmentId,
+        projectId,
+        title: "VM project check",
+        modelSelection,
+        runtimeMode: "full-access",
+      });
+      expect(launched.isError, JSON.stringify(launched.content)).toBe(false);
+      expect(launched.structuredContent).toMatchObject({ projectId });
+      expect(yield* Ref.get(thread.launchedWith)).toMatchObject({ runtimeMode: "full-access" });
+      expect(yield* Ref.get(thread.linkOrigin)).toMatchObject({
+        sessionId: session.sessionId,
+        access: "auto",
+      });
+
+      const delegated = yield* a.call("delegate_task", {
+        target: { environmentId: box.environmentId, projectId },
+        task: "Check the new project.",
+        runtimeMode: "full-access",
+        mode: "async",
+      });
+      expect(delegated.isError, JSON.stringify(delegated.content)).toBe(false);
+      expect(yield* Ref.get(thread.launchedWith)).toMatchObject({ runtimeMode: "full-access" });
+      const deletion = yield* a.call("t3_project_delete", {
+        environmentId: box.environmentId,
+        projectId,
+      });
+      expect(deletion.isError).toBe(true);
+      expect((yield* a.orchestrator.getThreadProjection(parentThreadId)).thread.runtimeMode).toBe(
+        "auto",
+      );
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

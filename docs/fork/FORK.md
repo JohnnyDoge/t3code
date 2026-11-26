@@ -313,15 +313,17 @@ alone.
 
 ### Full Access delegation to a VM
 
-The receiving Linux Hyper-V guest can opt in through `/etc/t3code/vm-delegation.json`.
-Only the guest administrator can write the file and its directory. Configure the guest's
-machine ID, T3 environment ID, project ID, and the source environment ID and authenticated
-link session ID for each permitted source. In JSON these are `machineId`, `environmentId`,
-`projectId`, and a `sources` array of `sourceEnvironmentId` and `sourceSessionId` pairs.
+The administrator of the receiving Linux Hyper-V guest can opt in through
+`/etc/t3code/vm-delegation.json`. The file and directory must be root-owned. Use
+`machineId`, `environmentId`, `projectScope: "all"`, and a `sources` array of
+`sourceEnvironmentId` and authenticated `sourceSessionId` pairs. Older grants
+with `projectId` keep their original launch-only scope.
 
-Requests must use `delegate_task` with `runtimeMode: "full-access"` and arrive through
-the matching Full Access link. The caller stays in Auto, and the launched thread cannot
-forward a new task through the guest's links. Remove the file to stop granting new launches.
+A live Auto thread arriving through a matching Full Access link can register
+or clone projects in the guest and explicitly request `runtimeMode: "full-access"`
+when launching or delegating there. The launched thread remains fenced to its
+link and cannot use the guest's downstream links. Removing the grant stops new
+VM project setup and elevated launches.
 
 ### Local Node in Usage Limits
 
@@ -333,49 +335,51 @@ midnight and resets the week on Friday. It has no effect on request admission.
 
 ## 6. Seam registry (upstream files touched by the fork)
 
-| Upstream file                                              | Seam                                                                                                           | Why                                                       |
-| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| `apps/web/src/components/Sidebar.tsx`                      | Register the shared thread menu, add an off-list lookup, and delegate board menu state, marks, and card rename | Board cards reuse the Sidebar thread menu                 |
-| `apps/web/src/components/sidebar/SidebarChrome.tsx`        | Mount the board header button and its width probe                                                              | Board entry button at the right edge                      |
-| `apps/web/src/components/sidebar/mainAppLocation.ts`       | `/board` does not overwrite the main-app return location                                                       | Button toggles back                                       |
-| `apps/web/src/components/CommandPalette.tsx`               | Append the fork-owned palette action                                                                           | Open task board                                           |
-| `apps/web/src/components/threadActionMenu.logic.ts`        | Typed extension items after Mark unread pass through the existing permission filter                            | Mark as seen / unseen                                     |
-| `apps/web/src/components/threadActionMenu.logic.test.ts`   | Cover extension item ordering and permission gating                                                            | Verify the menu insertion point                           |
-| `apps/web/src/hooks/useThreadActionMenu.ts`                | Insert and dispatch board marks via the fork menu hook                                                         | Chat header menu                                          |
-| `apps/web/src/hooks/useThreadActionMenu.test.ts`           | Stub the board menu hook                                                                                       | Keep upstream permission tests independent of board hooks |
-| `apps/web/src/components/chat/ChatHeader.tsx`              | Mount BoardSeenButton                                                                                          | Mark as seen in the chat                                  |
-| `apps/web/src/components/HistorySwipeNavigation.tsx`       | Honor `data-history-swipe="off"` on scrollers                                                                  | Board's horizontal scroll must not navigate back          |
-| `apps/web/src/components/sidebar/SidebarThreadRow.tsx`     | Export `ThreadRenameInput`                                                                                     | Rename in place on board cards                            |
-| `apps/web/src/routes/_chat.board.tsx`                      | New route file mounting `TaskBoardPage` (`routeTree.gen.ts` is regenerated, not registered)                    | `/board` route                                            |
-| `apps/desktop/src/main.ts`                                 | Set the official early runtime name and attach shared-profile launch feedback for a packaged fork              | Share Safe Storage and the single-instance lock           |
-| `apps/desktop/src/app/DesktopEnvironment.ts`               | Use the fork display name and Windows app model ID                                                             | Match the fork bundle and shortcut                        |
-| `scripts/build-desktop-artifact.ts`                        | Select the fork package identity and the self-signed macOS build configuration                                 | Separate installation and updater identities              |
-| `scripts/verify-windows-desktop-artifact.ts`               | Accept the fork identity for the Windows native verifier                                                       | Locate the fork executable on the Windows test runner     |
-| `packages/client-runtime/src/operations/commands.ts`       | `setThreadTag` dispatching stock `thread.tag.set`                                                              | Write board tags                                          |
-| `packages/client-runtime/src/state/threadCommands.ts`      | `setTag` command with optimistic shell update                                                                  | Cards move instantly                                      |
-| `packages/client-runtime/src/state/threadCommands.test.ts` | Cases for `setTag`                                                                                             | Covers the optimistic update                              |
-| `apps/server/src/mcp/McpHttpServer.ts` | Validate the VM's administrator grant after peer authentication. | Keep this fork feature through upstream sync |
-| `apps/server/src/mcp/McpInvocationContext.ts` | Carry the verified VM project in the request scope. | Keep this fork feature through upstream sync |
-| `apps/server/src/mcp/McpToolAccess.ts` | Allow an opted-in VM launch while preserving its link fence. | Keep this fork feature through upstream sync |
-| `apps/server/src/mcp/toolkits/project/handlers.ts` | Restrict the VM exception to this launch and the authenticated sender. | Keep this fork feature through upstream sync |
-| `apps/server/src/peer/PeerForwarding.ts` | Forward the VM launch request without changing the caller's limits. | Keep this fork feature through upstream sync |
-| `apps/server/src/peer/PeerMcpClient.ts` | Carry the VM delegation header on internally forwarded requests. | Keep this fork feature through upstream sync |
-| `apps/server/src/peer/RemoteDelegation.test.ts` | Verify VM delegation and its authorization boundaries. | Keep this fork feature through upstream sync |
-| `apps/server/src/peer/RemoteDelegation.ts` | Require an explicit Full Access request for VM delegation. | Keep this fork feature through upstream sync |
-| `apps/server/src/peer/VmDelegation.ts` | Load the root-owned grant for the designated Hyper-V guest. | Keep this fork feature through upstream sync |
-| `apps/server/src/orchestration-v2/Adapters/OpenCode2AdapterV2.test.ts` | Cover OpenCode follow-up suggestions. | Keep this fork feature through upstream sync |
-| `apps/server/src/orchestration-v2/Adapters/OpenCode2AdapterV2.testkit.ts` | Support replay coverage for OpenCode follow-up suggestions. | Keep this fork feature through upstream sync |
-| `apps/web/src/components/chat/usePromptSuggestion.test.ts` | Cover the display of OpenCode follow-up suggestions. | Keep this fork feature through upstream sync |
-| `docs/user/composer.md` | Document OpenCode follow-up suggestions. | Keep this fork feature through upstream sync |
-| `packages/provider-opencode/src/server/v2/adapter.ts` | Generate an OpenCode follow-up on the configured Local Node route. | Keep this fork feature through upstream sync |
-| `packages/provider-opencode/src/server/v2/textGeneration.ts` | Apply the configured model when generating an OpenCode follow-up. | Keep this fork feature through upstream sync |
-| `apps/server/src/usage/localNodeQuota.ts` | Read and validate the optional Local Node Limits calculation | Preserve Local Node Limits through upstream sync |
-| `apps/server/src/usage/localNodeQuota.test.ts` | Read and validate the optional Local Node Limits calculation | Preserve Local Node Limits through upstream sync |
-| `packages/contracts/src/settings.ts` | Opt in to the Local Node dashboard as a Limits source | Preserve Local Node Limits through upstream sync |
-| `packages/contracts/src/providerUsageLimits.ts` | Identify the simulated limits in the presentation | Preserve Local Node Limits through upstream sync |
-| `apps/server/src/usage/UsageLimitSources.ts` | Read Local Node aggregates only for the selected source | Preserve Local Node Limits through upstream sync |
-| `apps/web/src/components/settings/AddUsageLimitSourceDialog.logic.ts` | Keep a stable ID when adding the Local Node source | Preserve Local Node Limits through upstream sync |
-| `apps/web/src/components/settings/AddUsageLimitSourceDialog.tsx` | Configure the loopback Local Node dashboard in the existing dialog | Preserve Local Node Limits through upstream sync |
-| `apps/web/src/components/settings/UsageProviderSettings.tsx` | Expose the Local Node source in Usage settings | Preserve Local Node Limits through upstream sync |
-| `apps/web/src/components/usage/UsageLimitsPooled.tsx` | Reuse native meters for the three Local Node rows | Preserve Local Node Limits through upstream sync |
-| `apps/web/src/components/settings/AddUsageLimitSourceDialog.browser.test.tsx` | Verify that Local Node setup uses a loopback URL without a key | Preserve Local Node Limits through upstream sync |
+| Upstream file                                                                 | Seam                                                                                                           | Why                                                       |
+| ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `apps/web/src/components/Sidebar.tsx`                                         | Register the shared thread menu, add an off-list lookup, and delegate board menu state, marks, and card rename | Board cards reuse the Sidebar thread menu                 |
+| `apps/web/src/components/sidebar/SidebarChrome.tsx`                           | Mount the board header button and its width probe                                                              | Board entry button at the right edge                      |
+| `apps/web/src/components/sidebar/mainAppLocation.ts`                          | `/board` does not overwrite the main-app return location                                                       | Button toggles back                                       |
+| `apps/web/src/components/CommandPalette.tsx`                                  | Append the fork-owned palette action                                                                           | Open task board                                           |
+| `apps/web/src/components/threadActionMenu.logic.ts`                           | Typed extension items after Mark unread pass through the existing permission filter                            | Mark as seen / unseen                                     |
+| `apps/web/src/components/threadActionMenu.logic.test.ts`                      | Cover extension item ordering and permission gating                                                            | Verify the menu insertion point                           |
+| `apps/web/src/hooks/useThreadActionMenu.ts`                                   | Insert and dispatch board marks via the fork menu hook                                                         | Chat header menu                                          |
+| `apps/web/src/hooks/useThreadActionMenu.test.ts`                              | Stub the board menu hook                                                                                       | Keep upstream permission tests independent of board hooks |
+| `apps/web/src/components/chat/ChatHeader.tsx`                                 | Mount BoardSeenButton                                                                                          | Mark as seen in the chat                                  |
+| `apps/web/src/components/HistorySwipeNavigation.tsx`                          | Honor `data-history-swipe="off"` on scrollers                                                                  | Board's horizontal scroll must not navigate back          |
+| `apps/web/src/components/sidebar/SidebarThreadRow.tsx`                        | Export `ThreadRenameInput`                                                                                     | Rename in place on board cards                            |
+| `apps/web/src/routes/_chat.board.tsx`                                         | New route file mounting `TaskBoardPage` (`routeTree.gen.ts` is regenerated, not registered)                    | `/board` route                                            |
+| `apps/desktop/src/main.ts`                                                    | Set the official early runtime name and attach shared-profile launch feedback for a packaged fork              | Share Safe Storage and the single-instance lock           |
+| `apps/desktop/src/app/DesktopEnvironment.ts`                                  | Use the fork display name and Windows app model ID                                                             | Match the fork bundle and shortcut                        |
+| `scripts/build-desktop-artifact.ts`                                           | Select the fork package identity and the self-signed macOS build configuration                                 | Separate installation and updater identities              |
+| `scripts/verify-windows-desktop-artifact.ts`                                  | Accept the fork identity for the Windows native verifier                                                       | Locate the fork executable on the Windows test runner     |
+| `packages/client-runtime/src/operations/commands.ts`                          | `setThreadTag` dispatching stock `thread.tag.set`                                                              | Write board tags                                          |
+| `packages/client-runtime/src/state/threadCommands.ts`                         | `setTag` command with optimistic shell update                                                                  | Cards move instantly                                      |
+| `packages/client-runtime/src/state/threadCommands.test.ts`                    | Cases for `setTag`                                                                                             | Covers the optimistic update                              |
+| `apps/server/src/mcp/McpHttpServer.ts`                                        | Validate the VM's administrator grant after peer authentication.                                               | Keep this fork feature through upstream sync              |
+| `apps/server/src/mcp/McpInvocationContext.ts`                                 | Carry the verified VM project in the request scope.                                                            | Keep this fork feature through upstream sync              |
+| `apps/server/src/mcp/McpToolAccess.ts`                                        | Allow an opted-in VM launch while preserving its link fence.                                                   | Keep this fork feature through upstream sync              |
+| `apps/server/src/mcp/toolkits/project/handlers.ts`                            | Restrict the VM exception to this launch and the authenticated sender.                                         | Keep this fork feature through upstream sync              |
+| `apps/server/src/peer/PeerForwarding.ts`                                      | Forward the VM launch request without changing the caller's limits.                                            | Keep this fork feature through upstream sync              |
+| `apps/server/src/peer/PeerMcpClient.ts`                                       | Carry the VM delegation header on internally forwarded requests.                                               | Keep this fork feature through upstream sync              |
+| `apps/server/src/peer/RemoteDelegation.test.ts`                               | Verify VM delegation and its authorization boundaries.                                                         | Keep this fork feature through upstream sync              |
+| `apps/server/src/peer/RemoteDelegation.ts`                                    | Require an explicit Full Access request for VM delegation.                                                     | Keep this fork feature through upstream sync              |
+| `apps/server/src/peer/VmDelegation.ts`                                        | Load the root-owned grant for the designated Hyper-V guest.                                                    | Keep this fork feature through upstream sync              |
+| `apps/server/src/orchestration-v2/Adapters/OpenCode2AdapterV2.test.ts`        | Cover OpenCode follow-up suggestions.                                                                          | Keep this fork feature through upstream sync              |
+| `apps/server/src/orchestration-v2/Adapters/OpenCode2AdapterV2.testkit.ts`     | Support replay coverage for OpenCode follow-up suggestions.                                                    | Keep this fork feature through upstream sync              |
+| `apps/web/src/components/chat/usePromptSuggestion.test.ts`                    | Cover the display of OpenCode follow-up suggestions.                                                           | Keep this fork feature through upstream sync              |
+| `docs/user/composer.md`                                                       | Document OpenCode follow-up suggestions.                                                                       | Keep this fork feature through upstream sync              |
+| `packages/provider-opencode/src/server/v2/adapter.ts`                         | Generate an OpenCode follow-up on the configured Local Node route.                                             | Keep this fork feature through upstream sync              |
+| `packages/provider-opencode/src/server/v2/textGeneration.ts`                  | Apply the configured model when generating an OpenCode follow-up.                                              | Keep this fork feature through upstream sync              |
+| `apps/server/src/usage/localNodeQuota.ts`                                     | Read and validate the optional Local Node Limits calculation                                                   | Preserve Local Node Limits through upstream sync          |
+| `apps/server/src/usage/localNodeQuota.test.ts`                                | Read and validate the optional Local Node Limits calculation                                                   | Preserve Local Node Limits through upstream sync          |
+| `packages/contracts/src/settings.ts`                                          | Opt in to the Local Node dashboard as a Limits source                                                          | Preserve Local Node Limits through upstream sync          |
+| `packages/contracts/src/providerUsageLimits.ts`                               | Identify Local Node limits and carry their reset window durations                                              | Preserve Local Node Limits through upstream sync          |
+| `packages/shared/src/usageLimits.ts`                                          | Use the source name as the Local Node provider title                                                           | Preserve Local Node Limits through upstream sync          |
+| `apps/server/src/usage/UsageLimitSources.ts`                                  | Read Local Node aggregates only for the selected source                                                        | Preserve Local Node Limits through upstream sync          |
+| `apps/web/src/components/settings/AddUsageLimitSourceDialog.logic.ts`         | Keep a stable ID when adding the Local Node source                                                             | Preserve Local Node Limits through upstream sync          |
+| `apps/web/src/components/settings/AddUsageLimitSourceDialog.tsx`              | Configure the loopback Local Node dashboard in the existing dialog                                             | Preserve Local Node Limits through upstream sync          |
+| `apps/web/src/components/settings/UsageProviderSettings.tsx`                  | Expose the Local Node source in Usage settings                                                                 | Preserve Local Node Limits through upstream sync          |
+| `apps/web/src/components/usage/UsageLimitsPooled.tsx`                         | Reuse native meters for the three Local Node rows                                                              | Preserve Local Node Limits through upstream sync          |
+| `apps/web/src/components/settings/AddUsageLimitSourceDialog.browser.test.tsx` | Verify that Local Node setup uses a loopback URL without a key                                                 | Preserve Local Node Limits through upstream sync          |
+| `apps/web/src/components/usage/UsageLimitsPooled.browser.test.tsx`            | Verify that Local Node matches the native provider cards                                                       | Preserve Local Node Limits through upstream sync          |
