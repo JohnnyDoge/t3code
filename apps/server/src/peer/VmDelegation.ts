@@ -1,6 +1,6 @@
 // fork(board): Load the root-owned grant for the designated Hyper-V guest.
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- O_NOFOLLOW and metadata from the opened descriptor are needed for the administrator grant.
-import { constants, lstat, open, readFile } from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import {
   EnvironmentId,
   ProjectId,
@@ -8,6 +8,7 @@ import {
   type RuntimeMode,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -78,13 +79,11 @@ const decodeGrant = Schema.decodeUnknownSync(Schema.fromJsonString(grantSchema),
 });
 
 async function readGrant(): Promise<Grant | undefined> {
-  if (process.platform !== "linux") return undefined;
-
   const [directoryInfo, vendor, product, machineId] = await Promise.all([
-    lstat(directory),
-    readFile("/sys/class/dmi/id/sys_vendor", "utf8"),
-    readFile("/sys/class/dmi/id/product_name", "utf8"),
-    readFile("/etc/machine-id", "utf8"),
+    NodeFSP.lstat(directory),
+    NodeFSP.readFile("/sys/class/dmi/id/sys_vendor", "utf8"),
+    NodeFSP.readFile("/sys/class/dmi/id/product_name", "utf8"),
+    NodeFSP.readFile("/etc/machine-id", "utf8"),
   ]);
   if (
     !directoryInfo.isDirectory() ||
@@ -96,7 +95,10 @@ async function readGrant(): Promise<Grant | undefined> {
     return undefined;
 
   // The file and its parent are controlled by the guest administrator.
-  const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  const handle = await NodeFSP.open(
+    file,
+    NodeFSP.constants.O_RDONLY | NodeFSP.constants.O_NOFOLLOW | NodeFSP.constants.O_NONBLOCK,
+  );
   try {
     const info = await handle.stat();
     if (!info.isFile() || info.uid !== 0 || (info.mode & 0o022) !== 0 || info.size > maxBytes)
@@ -112,6 +114,11 @@ async function readGrant(): Promise<Grant | undefined> {
 export const LoadGrant = Context.Reference<Effect.Effect<Grant | undefined>>(
   "t3/peer/VmDelegation/LoadGrant",
   {
-    defaultValue: () => Effect.promise(() => readGrant().catch(() => undefined)),
+    defaultValue: () =>
+      Effect.flatMap(HostProcess.Platform, (platform) =>
+        platform === "linux"
+          ? Effect.promise(() => readGrant().catch(() => undefined))
+          : Effect.undefined,
+      ),
   },
 );

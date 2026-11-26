@@ -707,19 +707,15 @@ function collectLocalNodePools(sources: ReturnType<typeof collectHttpQuotaSource
         checkedAt: source.checkedAt,
         // Older Local Node reports included caveats in the window labels.
         windows: account.windows.map((window) => {
-          if (window.id === "daily")
-            return {
-              ...window,
-              label: "Daily",
-              windowDurationMins: window.windowDurationMins ?? 1_440,
-            };
-          if (window.id === "weekly")
-            return {
-              ...window,
-              label: "Weekly",
-              windowDurationMins: window.windowDurationMins ?? 10_080,
-            };
-          return window;
+          const defaultDuration =
+            window.id === "daily" ? 1_440 : window.id === "weekly" ? 10_080 : undefined;
+          return defaultDuration === undefined
+            ? window
+            : {
+                ...window,
+                label: window.label.replace(/ · partial$/, ""),
+                windowDurationMins: window.windowDurationMins ?? defaultDuration,
+              };
         }),
       },
     }));
