@@ -44,12 +44,14 @@ function fixture(root: string) {
   }
   function sync(mode?: "--resume" | "--abort") {
     const args = mode ? ["-s", "--", mode] : ["scripts/fork/sync-upstream.sh"];
-    const result = NodeChildProcess.spawnSync("/bin/bash", args, {
+    const shell = process.platform === "win32" ? "bash" : "/bin/bash";
+    const result = NodeChildProcess.spawnSync(shell, args, {
       cwd: repo,
       encoding: "utf8",
       env,
       ...(mode && { input: git("show", "main:scripts/fork/sync-upstream.sh") }),
     });
+    if (result.error) throw result.error;
     return { ...result, lastLine: result.stdout.trim().split("\n").at(-1) };
   }
 

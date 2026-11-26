@@ -400,7 +400,7 @@ export const openCode2ReplayRuntime = (
 
 export const OpenCode2OrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
   OpenCode2ReplayTranscript,
-  OpenCodeReplayTranscriptDecodeError
+  OpenCodeReplayTranscriptDecodeError | HttpClientError.HttpClientError
 > = {
   driver: OPENCODE_PROVIDER,
   decodeTranscript: (transcript: ProviderReplayTranscript) =>

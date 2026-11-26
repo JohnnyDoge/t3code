@@ -25,6 +25,7 @@ export async function chooseBoardSnooze(
       canSnoozeNow: true,
       isRegeneratingTitle: false,
       isRunning: false,
+      hasCompletedRun: false,
       supports: {
         settlement: false,
         autoSettleOptOut: false,
