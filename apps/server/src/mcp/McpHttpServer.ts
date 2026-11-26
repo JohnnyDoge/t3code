@@ -56,6 +56,8 @@ import {
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpClientInput from "./McpClientInput.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+// fork(board): Validate the VM's administrator grant after peer authentication.
+import * as VmDelegation from "../peer/VmDelegation.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolExposure from "./McpToolExposure.ts";
 import * as McpWebhookTransport from "./McpWebhookTransport.ts";
@@ -302,6 +304,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
   const clients = yield* Effect.serviceOption(McpClientAuthenticator);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const runtimeModeCeiling = serverSettings.managedPolicy?.limits?.maxRuntimeMode;
+  const loadVmGrant = yield* VmDelegation.LoadGrant;
   const settingsFlags = serverSettings.getSettings.pipe(
     Effect.map((settings) => ({
       linkedEnvironments: settings.linkedEnvironmentsEnabled,
@@ -387,7 +390,25 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     if (asked === undefined) return invalidModeLimit;
     const limited = McpInvocationContext.withRuntimeModeCeiling(asked, runtimeModeCeiling);
     const { linkedEnvironments, agentFeedback, workflows } = yield* settingsFlags;
-    if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
+    const client = limited.client;
+    if (client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
+    const grant =
+      request.headers[VmDelegation.header] === "1" &&
+      limited.thread === undefined &&
+      client?.linked === true &&
+      client.access === "full-access" &&
+      client.narrowedTo?.runtimeMode === "auto" &&
+      client.narrowedTo.interactionMode === "default" &&
+      (runtimeModeCeiling === undefined || runtimeModeCeiling === "full-access")
+        ? yield* loadVmGrant
+        : undefined;
+    const vmDelegationProject =
+      grant !== undefined &&
+      grant.environmentId === limited.environmentId &&
+      grant.sourceSessionId === client?.sessionId &&
+      grant.sourceEnvironmentId === client?.senderThread?.environmentId
+        ? grant.projectId
+        : undefined;
     const origin = Option.getOrUndefined(Option.map(requestUrl(request), (url) => url.origin));
     const forge =
       limited.thread === undefined
@@ -402,6 +423,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       origin,
       ...(forge === undefined ? {} : { forge }),
       ...(toolExposure === undefined ? {} : { toolExposure }),
+      ...(vmDelegationProject === undefined ? {} : { vmDelegationProject }),
     };
   });
   // Untraced: a span here would wrap the tool call; the HTTP server span already covers it.

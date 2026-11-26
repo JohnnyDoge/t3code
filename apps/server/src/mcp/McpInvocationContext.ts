@@ -7,6 +7,7 @@ import {
   PreviewAutomationUnavailableError,
   type ProviderInstanceId,
   type ProviderInteractionMode,
+  type ProjectId,
   type OrchestrationV2LinkedSender,
   type RuntimeMode,
   type ThreadId,
@@ -154,6 +155,9 @@ export interface McpInvocationScope {
   readonly requestNamespace: string;
   readonly thread: McpThreadCaller | undefined;
   readonly client: McpClientCaller | undefined;
+  // fork(board): Carry the verified VM project in the request scope.
+  /** The receiving VM's administrator approved one linked launch in this project. */
+  readonly vmDelegationProject?: ProjectId | undefined;
   /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
   readonly linkedEnvironments?: boolean;
   /** The Agent feedback mode here; `/mcp` reads it per request. Unset is off. */

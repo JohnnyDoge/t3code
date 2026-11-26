@@ -20,6 +20,8 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as PeerLinks from "./PeerLinks.ts";
+// fork(board): Carry the VM delegation header on internally forwarded requests.
+import * as VmDelegation from "./VmDelegation.ts";
 
 /** The only MCP protocol version a T3 Code `/mcp` registers. */
 const PROTOCOL_VERSION = "2025-06-18";
@@ -49,6 +51,8 @@ export class PeerMcpClient extends Context.Service<
       readonly limits: PeerCallLimits;
       /** The thread here the call is made for, sent as `T3-Sender-Thread`. */
       readonly sender?: OrchestrationV2LinkedSender;
+      /** Set by RemoteDelegation, never by a forwarded tool argument. */
+      readonly vmFullAccess?: true;
       readonly success: S;
     }) => Effect.Effect<S["Type"], OrchestratorMcpFailure>;
   }
@@ -225,6 +229,7 @@ const make = Effect.gen(function* () {
           {
             ...limitHeader,
             ...senderHeader,
+            ...(input.vmFullAccess === true ? { [VmDelegation.header]: "1" } : {}),
             "mcp-session-id": sessionId,
             "mcp-protocol-version": PROTOCOL_VERSION,
           },

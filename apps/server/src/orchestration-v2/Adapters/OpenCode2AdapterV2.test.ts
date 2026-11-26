@@ -477,6 +477,7 @@ const history = {
   cursor: {},
 };
 
+// fork(board): Cover OpenCode follow-up suggestions.
 const nativeGoal = (status: "active" | "paused" | "complete") => ({
   id: "goal-1",
   objective: "Write proof.txt",

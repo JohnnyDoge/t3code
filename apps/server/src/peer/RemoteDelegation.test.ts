@@ -43,6 +43,7 @@ import { McpSchema, McpServer } from "effect/ai";
 import * as ServerConfig from "../config.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 import { idleThreadProjection, liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
@@ -68,9 +69,11 @@ import * as SourceControlRepositoryService from "../sourceControl/SourceControlR
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
+import * as PeerMcpClient from "./PeerMcpClient.ts";
 import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
 import * as RemoteDelegation from "./RemoteDelegation.ts";
 import * as PeerLinkRequests from "./PeerLinkRequests.ts";
+import * as VmDelegation from "./VmDelegation.ts";
 
 // The laptop's agent delegates a task to the box through a link. The box is
 // its real /mcp behind real OAuth, with one thread the test finishes; the
@@ -760,6 +763,7 @@ const makeLaptop = (
     const server = Context.get(here, McpServer.McpServer);
     return {
       links: Context.get(linking, PeerLinks.PeerLinks),
+      peerMcp: Context.get(linking, PeerMcpClient.PeerMcpClient),
       settings: Context.get(linking, ServerSettings.ServerSettingsService),
       orchestrator: Context.get(here, Orchestrator.OrchestratorV2),
       remote: Context.get(here, RemoteDelegation.RemoteDelegation),
@@ -796,6 +800,7 @@ const parentScope: McpInvocationContext.McpInvocationScope = {
 const seedParent = (
   laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>,
   parentModelSelection: ModelSelection = modelSelection,
+  runtimeMode: LaunchedWith["runtimeMode"] = "full-access",
 ) =>
   Effect.gen(function* () {
     const now = yield* DateTime.now;
@@ -809,7 +814,7 @@ const seedParent = (
       projectId: ProjectId.make("project:laptop"),
       title: "Laptop parent",
       modelSelection: parentModelSelection,
-      runtimeMode: "full-access",
+      runtimeMode,
       interactionMode: "default",
       branch: null,
       worktreePath: null,
@@ -968,6 +973,126 @@ const captureThreadReads = (nativeFetch: typeof globalThis.fetch) => {
   };
   return { reads, fetch };
 };
+
+// fork(board): Verify VM delegation and its authorization boundaries.
+it.effect("an Auto caller can delegate Full Access only through the VM's pinned grant", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const grant = yield* Ref.make<VmDelegation.Grant | undefined>(undefined);
+      const b = yield* serveBox(thread).pipe(
+        Effect.provideService(VmDelegation.LoadGrant, Ref.get(grant)),
+      );
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a, modelSelection, "auto");
+      const [session] = yield* b.linkedSessions;
+      if (session === undefined) return yield* Effect.die("expected the authenticated link");
+      const input = {
+        task: "Find a product in the guest.",
+        target: { environmentId: box.environmentId, projectId: boxProject },
+        runtimeMode: "full-access",
+        mode: "async",
+      };
+      const approved = {
+        machineId: "0".repeat(32),
+        environmentId: box.environmentId,
+        projectId: boxProject,
+        sourceEnvironmentId: laptop.environmentId,
+        sourceSessionId: session.sessionId,
+      };
+      for (const rejected of [
+        undefined,
+        { ...approved, environmentId: laptop.environmentId },
+        { ...approved, sourceEnvironmentId: box.environmentId },
+        { ...approved, sourceSessionId: "other-pairing" },
+        { ...approved, projectId: ProjectId.make("project:other") },
+      ]) {
+        yield* Ref.set(grant, rejected);
+        expect((yield* a.call("delegate_task", input)).isError).toBe(true);
+      }
+      expect(yield* Ref.get(thread.launched)).toBeNull();
+      yield* Ref.set(grant, approved);
+
+      const sender = {
+        environmentId: laptop.environmentId,
+        threadId: parentThreadId,
+        title: "Laptop parent",
+      };
+      const directLaunch = {
+        tool: "t3_thread_launch",
+        environmentId: box.environmentId,
+        sender,
+        limits: { runtimeMode: "auto", interactionMode: "default" },
+        arguments: {
+          projectId: boxProject,
+          title: "Forged VM delegation",
+          message: "Ordinary requests cannot raise their own mode.",
+          runtimeMode: "full-access",
+          delegatedFrom: sender,
+        },
+        success: ProjectToolkit.tools.t3_thread_launch.successSchema,
+      } as const;
+      for (const request of [
+        directLaunch,
+        {
+          ...directLaunch,
+          vmFullAccess: true,
+          limits: { runtimeMode: "approval-required", interactionMode: "default" },
+        },
+        {
+          ...directLaunch,
+          vmFullAccess: true,
+          limits: { runtimeMode: "auto", interactionMode: "plan" },
+        },
+        {
+          ...directLaunch,
+          vmFullAccess: true,
+          arguments: {
+            ...directLaunch.arguments,
+            delegatedFrom: { ...sender, threadId: ThreadId.make("thread:forged") },
+          },
+        },
+      ] as const) {
+        const refusal = yield* Effect.flip(a.peerMcp.call(request));
+        expect(refusal.code).toBe("runtime_mode_escalation_denied");
+      }
+      expect(yield* Ref.get(thread.launched)).toBeNull();
+
+      const launched = yield* a.call("delegate_task", input);
+      expect(launched.isError, JSON.stringify(launched.content)).toBe(false);
+      expect(yield* Ref.get(thread.launchedWith)).toMatchObject({ runtimeMode: "full-access" });
+      expect(yield* Ref.get(thread.linkOrigin)).toMatchObject({
+        sessionId: session.sessionId,
+        access: "auto",
+      });
+      expect((yield* a.orchestrator.getThreadProjection(parentThreadId)).thread.runtimeMode).toBe(
+        "auto",
+      );
+
+      const threadId = yield* Ref.get(thread.launched);
+      if (threadId === null) return yield* Effect.die("expected the VM thread");
+      const sent = yield* a.call("t3_thread_send", {
+        environmentId: box.environmentId,
+        threadId,
+        message: "Attempt to reuse the elevated thread",
+      });
+      expect(sent.isError).toBe(true);
+      expect(yield* Ref.get(thread.sent)).toEqual([]);
+
+      yield* Ref.set(thread.status, "completed");
+      yield* Ref.set(thread.reply, "Found it.");
+      yield* Deferred.succeed(thread.finished, undefined);
+      const { taskId } = launched.structuredContent as { taskId: NodeId };
+      const settled = yield* taskResult(a, taskId);
+      expect(settled).toMatchObject({ status: "completed", result: "Found it." });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
 
 it.effect("a task delegated to the box wakes the laptop's parent when it ends there", () =>
   Effect.scoped(

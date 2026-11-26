@@ -19,6 +19,7 @@ const isTextGenerationError = Schema.is(TextGenerationError);
 const GENERATION_TIMEOUT = "3 minutes";
 
 // Free models refuse denied read/shell permissions; ask and reject requests as they arrive.
+// fork(board): Apply the configured model when generating an OpenCode follow-up.
 const GENERATION_PERMISSIONS = [{ action: "*", resource: "*", effect: "ask" }] as const;
 
 type GenerationInput = Pick<

@@ -17,10 +17,12 @@ noted, not its code wholesale.
 
 ## 1. Survival rules (mandatory for every change)
 
-1. **No server, contract or persistence changes.** Nothing under `apps/server/`,
+1. **Keep the board out of the server, contracts and persistence.** Nothing under `apps/server/`,
    `packages/contracts/`, database migrations, or wire formats. The board stores its
    state only through commands the stock server already accepts. A stock nightly build
    must be able to run against data the fork wrote, and the other way round.
+   The OpenCode prompt suggestions and the opt-in VM delegation use server seams recorded below.
+   These seams add no database migrations.
 2. **New code lives in fork-owned paths**, which upstream never touches:
    - `apps/web/src/fork/**` for web UI and logic
    - `apps/desktop/src/fork/**` for desktop shell code
@@ -332,3 +334,18 @@ alone.
 | `packages/client-runtime/src/operations/commands.ts`       | `setThreadTag` dispatching stock `thread.tag.set`                                                              | Write board tags                                          |
 | `packages/client-runtime/src/state/threadCommands.ts`      | `setTag` command with optimistic shell update                                                                  | Cards move instantly                                      |
 | `packages/client-runtime/src/state/threadCommands.test.ts` | Cases for `setTag`                                                                                             | Covers the optimistic update                              |
+| `apps/server/src/mcp/McpHttpServer.ts` | Validate the VM's administrator grant after peer authentication. | Keep this fork feature through upstream sync |
+| `apps/server/src/mcp/McpInvocationContext.ts` | Carry the verified VM project in the request scope. | Keep this fork feature through upstream sync |
+| `apps/server/src/mcp/McpToolAccess.ts` | Allow an opted-in VM launch while preserving its link fence. | Keep this fork feature through upstream sync |
+| `apps/server/src/mcp/toolkits/project/handlers.ts` | Restrict the VM exception to this launch and the authenticated sender. | Keep this fork feature through upstream sync |
+| `apps/server/src/peer/PeerForwarding.ts` | Forward the VM launch request without changing the caller's limits. | Keep this fork feature through upstream sync |
+| `apps/server/src/peer/PeerMcpClient.ts` | Carry the VM delegation header on internally forwarded requests. | Keep this fork feature through upstream sync |
+| `apps/server/src/peer/RemoteDelegation.test.ts` | Verify VM delegation and its authorization boundaries. | Keep this fork feature through upstream sync |
+| `apps/server/src/peer/RemoteDelegation.ts` | Require an explicit Full Access request for VM delegation. | Keep this fork feature through upstream sync |
+| `apps/server/src/peer/VmDelegation.ts` | Load the root-owned grant for the designated Hyper-V guest. | Keep this fork feature through upstream sync |
+| `apps/server/src/orchestration-v2/Adapters/OpenCode2AdapterV2.test.ts` | Cover OpenCode follow-up suggestions. | Keep this fork feature through upstream sync |
+| `apps/server/src/orchestration-v2/Adapters/OpenCode2AdapterV2.testkit.ts` | Support replay coverage for OpenCode follow-up suggestions. | Keep this fork feature through upstream sync |
+| `apps/web/src/components/chat/usePromptSuggestion.test.ts` | Cover the display of OpenCode follow-up suggestions. | Keep this fork feature through upstream sync |
+| `docs/user/composer.md` | Document OpenCode follow-up suggestions. | Keep this fork feature through upstream sync |
+| `packages/provider-opencode/src/server/v2/adapter.ts` | Generate an OpenCode follow-up on the configured Local Node route. | Keep this fork feature through upstream sync |
+| `packages/provider-opencode/src/server/v2/textGeneration.ts` | Apply the configured model when generating an OpenCode follow-up. | Keep this fork feature through upstream sync |

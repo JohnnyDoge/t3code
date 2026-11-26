@@ -2415,6 +2415,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       });
     });
 
+    // fork(board): Generate an OpenCode follow-up on the configured Local Node route.
     const generatePromptSuggestion = Effect.fn("OpenCode2Adapter.generatePromptSuggestion")(
       function* (state: ThreadState, turn: ActiveTurn) {
         const { appThread, threadId, runId, modelSelection } = turn.input;

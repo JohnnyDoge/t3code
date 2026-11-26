@@ -282,16 +282,28 @@ export const startsThreads = <P, A, E, R>(
   },
   handle: (params: P, modes: StartedModes) => Effect.Effect<A, E, R>,
   linked: "stamped" | { readonly refused: string },
+  // fork(board): Allow an opted-in VM launch while preserving its link fence.
+  allowsVmDelegation?: (params: P, scope: Caller["scope"]) => boolean,
 ) => {
-  const started = Effect.fn("McpToolAccess.started")(function* (caller: Caller, params: P) {
+  const started = Effect.fn("McpToolAccess.started")(function* (
+    caller: Caller,
+    params: P,
+    vmFullAccess = false,
+  ) {
     const requested = modes(params);
+    const origin = callerLinkOrigin(caller);
     return {
-      runtimeMode: yield* resolveRuntimeMode(caller.limits.runtimeMode, requested.runtimeMode),
+      runtimeMode: yield* resolveRuntimeMode(
+        vmFullAccess ? "full-access" : caller.limits.runtimeMode,
+        requested.runtimeMode,
+      ),
       interactionMode: yield* resolveInteractionMode(
         caller.limits.interactionMode,
         requested.interactionMode,
       ),
-      linkOrigin: callerLinkOrigin(caller),
+      // Full Access within the VM still carries the link fence, including
+      // the prohibition on routing a new task to another environment.
+      linkOrigin: vmFullAccess && origin !== undefined ? { ...origin, access: "auto" } : origin,
     } satisfies StartedModes;
   });
   return declare(
@@ -299,7 +311,10 @@ export const startsThreads = <P, A, E, R>(
       Effect.gen(function* () {
         const caller = yield* writingCaller;
         if (linked !== "stamped") yield* assertNotLinked(caller, linked.refused);
-        return yield* handle(params, yield* started(caller, params));
+        return yield* handle(
+          params,
+          yield* started(caller, params, allowsVmDelegation?.(params, caller.scope) === true),
+        );
       }),
     (params: P) => Effect.flatMap(writingCaller, (caller) => started(caller, params)),
   );

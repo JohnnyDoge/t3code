@@ -50,6 +50,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { forkParked } from "../serverActivation.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 
@@ -165,6 +166,8 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const random = yield* SecureRandom.SecureRandom;
+  const settings = yield* ServerSettings.ServerSettingsService;
+  const maxRuntimeMode = settings.managedPolicy?.limits?.maxRuntimeMode;
   const hereId = yield* ServerEnvironment.ServerEnvironment.pipe(
     Effect.flatMap((environment) => environment.getEnvironmentId),
   );
@@ -343,13 +346,27 @@ const make = Effect.gen(function* () {
                 ),
               ),
             ));
+      // Only the VM can authorize this explicit exception. Keep the sender's
+      // real limits on the wire so other peers still refuse the launch.
+      // fork(board): Require an explicit Full Access request for VM delegation.
+      const vmFullAccess =
+        input.runtimeMode === "full-access" &&
+        parent.thread.runtimeMode === "auto" &&
+        parent.thread.interactionMode === "default" &&
+        (input.interactionMode === undefined ||
+          input.interactionMode === "inherit" ||
+          input.interactionMode === "default") &&
+        (maxRuntimeMode === undefined || maxRuntimeMode === "full-access");
       // Modes asked for are checked against this thread. Omitted ones are left
       // to the other side, which inherits this thread's modes capped by the
       // link's access, so a narrower link still takes the task.
       const runtimeMode =
         input.runtimeMode === undefined || input.runtimeMode === "inherit"
           ? undefined
-          : yield* resolveRuntimeMode(parent.thread.runtimeMode, input.runtimeMode);
+          : yield* resolveRuntimeMode(
+              vmFullAccess ? "full-access" : parent.thread.runtimeMode,
+              input.runtimeMode,
+            );
       const interactionMode =
         input.interactionMode === undefined || input.interactionMode === "inherit"
           ? undefined
@@ -385,6 +402,7 @@ const make = Effect.gen(function* () {
             title: parent.thread.title,
           },
         },
+        vmFullAccess ? { vmFullAccess: true } : undefined,
       );
       const link = yield* links.get(target.environmentId).pipe(
         Effect.map(Option.getOrUndefined),

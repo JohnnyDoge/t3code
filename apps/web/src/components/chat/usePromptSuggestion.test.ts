@@ -33,6 +33,7 @@ const run = (
   checkpointId: null,
   contextHandoffId: null,
 });
+// fork(board): Cover the display of OpenCode follow-up suggestions.
 const summary = (value: OrchestrationV2Run) => ({
   runId: value.id,
   status: value.status,

@@ -218,6 +218,7 @@ const replayHttpClient = (
     ),
   );
 
+// fork(board): Support replay coverage for OpenCode follow-up suggestions.
 export const replayServer = (
   transcript: ProviderReplayTranscript,
   options?: {

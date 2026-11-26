@@ -537,6 +537,16 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
       }),
     // The launched thread carries the caller's link, if it has one.
     "stamped",
+    // fork(board): Restrict the VM exception to this launch and the authenticated sender.
+    (input, scope) =>
+      scope.vmDelegationProject !== undefined &&
+      input.projectId === scope.vmDelegationProject &&
+      input.runtimeMode === "full-access" &&
+      input.scratch !== true &&
+      input.workspaceStrategy === undefined &&
+      input.delegatedFrom?.environmentId === scope.client?.senderThread?.environmentId &&
+      input.delegatedFrom?.threadId !== undefined &&
+      input.delegatedFrom.threadId === scope.client?.senderThread?.threadId,
   ),
   t3_project_list: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
