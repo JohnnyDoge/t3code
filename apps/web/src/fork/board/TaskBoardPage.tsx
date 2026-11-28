@@ -183,7 +183,6 @@ export function TaskBoardPage() {
       ),
     );
     if (confirmed._tag === "Success" && confirmed.value) {
-      // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
       const confirmedAt = new Date().toISOString();
       const count = await countFailedBoardMarks(review, async (thread) => {
         const ref = scopeThreadRef(thread.environmentId, thread.id);
@@ -302,7 +301,6 @@ export function TaskBoardPage() {
       }
       if (isTrailingDoubleClick(event.detail)) return;
       selection.clearSelection();
-      selection.setAnchor(key);
       void router.navigate({
         to: "/$environmentId/$threadId",
         params: buildThreadRouteParams(ref),
